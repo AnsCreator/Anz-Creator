@@ -22,7 +22,12 @@ MODELS_ROOT = os.path.join(_APPDATA, "Anz-Creator", "models")
 class ModelManager:
     """Download, cache, and serve model file paths."""
 
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(self, config_path: str = None):
+        if config_path is None:
+            config_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "config.yaml",
+            )
         with open(config_path, "r", encoding="utf-8") as f:
             self._cfg = yaml.safe_load(f)
         Path(MODELS_ROOT).mkdir(parents=True, exist_ok=True)
