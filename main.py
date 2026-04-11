@@ -6,8 +6,10 @@ Entry point: initializes Qt app, applies dark material theme, launches main wind
 import sys
 import os
 
-# Ensure project root is on path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Ensure project root is on path and set as working directory
+_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _PROJECT_ROOT)
+os.chdir(_PROJECT_ROOT)
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
