@@ -1,0 +1,12 @@
+PyQt6>=6.5.0
+qt-material>=2.14
+PyYAML>=6.0
+yt-dlp>=2024.1.0
+opencv-python>=4.8.0
+ultralytics>=8.1.0
+torch>=2.1.0
+torchvision>=0.16.0
+numpy>=1.24.0
+Pillow>=10.0.0
+scenedetect[opencv]>=0.6.2
+requests>=2.31.0

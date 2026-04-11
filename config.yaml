@@ -1,0 +1,81 @@
+app:
+  name: "Anz-Creator"
+  version: "1.0.0"
+  theme: "dark_teal.xml"
+  language: "en"
+
+paths:
+  models_dir: "%APPDATA%/Anz-Creator/models"
+  temp_dir: "temp"
+  output_dir: "output"
+
+models:
+  yolov8:
+    default: "yolov8m"
+    options:
+      yolov8n:
+        size_mb: 6
+        description: "Nano - CPU friendly, fastest"
+        url: "https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8n.pt"
+      yolov8s:
+        size_mb: 22
+        description: "Small - balanced speed/accuracy"
+        url: "https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8s.pt"
+      yolov8m:
+        size_mb: 52
+        description: "Medium - recommended"
+        url: "https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8m.pt"
+      yolov8x:
+        size_mb: 131
+        description: "XLarge - highest accuracy"
+        url: "https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8x.pt"
+
+  sam2:
+    default: "sam2_hiera_base_plus"
+    options:
+      sam2_hiera_tiny:
+        size_mb: 38
+        description: "Tiny - fastest inference"
+        url: "https://dl.fbaipublicfiles.com/segment_anything_2/sam2_hiera_tiny.pt"
+      sam2_hiera_small:
+        size_mb: 46
+        description: "Small - good balance"
+        url: "https://dl.fbaipublicfiles.com/segment_anything_2/sam2_hiera_small.pt"
+      sam2_hiera_base_plus:
+        size_mb: 81
+        description: "Base+ - recommended"
+        url: "https://dl.fbaipublicfiles.com/segment_anything_2/sam2_hiera_base_plus.pt"
+      sam2_hiera_large:
+        size_mb: 224
+        description: "Large - max precision"
+        url: "https://dl.fbaipublicfiles.com/segment_anything_2/sam2_hiera_large.pt"
+
+  propainter:
+    default: "standard"
+    options:
+      lightweight:
+        vram_gb: 4
+        description: "Lightweight - 4GB VRAM"
+      standard:
+        vram_gb: 6
+        description: "Standard - 6GB VRAM (recommended)"
+      high_quality:
+        vram_gb: 8
+        description: "High Quality - 8GB VRAM"
+      ultra_4k:
+        vram_gb: 12
+        description: "Ultra 4K - 12GB VRAM"
+
+video:
+  default_quality: "1080p"
+  default_format: "mp4"
+  supported_qualities:
+    - "4K"
+    - "1080p"
+    - "720p"
+    - "480p"
+
+ffmpeg:
+  video_codec: "libx264"
+  crf: 18
+  preset: "medium"
