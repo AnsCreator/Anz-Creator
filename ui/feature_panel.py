@@ -303,33 +303,85 @@ class WatermarkRemovalPanel(QWidget):
         self.progress.update_progress(0, "Loading video…")
 
         def _do_load(progress_callback=None, cancel_flag=None):
+            import subprocess
+
             import cv2
-
-            info = get_video_info(path)
-
-            # Read first frame safely
-            cap = cv2.VideoCapture(path)
-            if not cap.isOpened():
-                raise IOError(f"Cannot open video: {path}")
-            ret, frame = cap.read()
-            cap.release()
-
-            if not ret or frame is None:
-                raise IOError(f"Cannot read first frame from: {path}")
-
-            # Convert to RGB in the worker thread (safe from UI crash)
-            h, w = frame.shape[:2]
-            ch = frame.shape[2] if frame.ndim == 3 else 1
-            if ch == 4:
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
-            elif ch == 3:
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            else:
-                rgb = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
-
             import numpy as np
 
-            rgb = np.ascontiguousarray(rgb)
+            if progress_callback:
+                progress_callback(10, "Reading video info…")
+
+            # Get video info via OpenCV (fast, just reads header)
+            info = get_video_info(path)
+
+            if progress_callback:
+                progress_callback(30, "Extracting first frame…")
+
+            # Try FFmpeg first (more robust than OpenCV for reading frames)
+            frame = None
+            try:
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", path,
+                    "-vframes", "1",
+                    "-f", "image2pipe",
+                    "-pix_fmt", "rgb24",
+                    "-vcodec", "rawvideo",
+                    "-loglevel", "error",
+                    "-",
+                ]
+                si = None
+                cf = 0
+                if os.name == "nt":
+                    si = subprocess.STARTUPINFO()
+                    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    si.wShowWindow = 0
+                    cf = subprocess.CREATE_NO_WINDOW
+
+                proc = subprocess.run(
+                    cmd, capture_output=True, timeout=15,
+                    startupinfo=si, creationflags=cf,
+                )
+                if proc.returncode == 0 and len(proc.stdout) > 0:
+                    raw = np.frombuffer(proc.stdout, dtype=np.uint8)
+                    frame = raw.reshape((info.height, info.width, 3))
+                    log.info("Frame extracted via FFmpeg.")
+            except Exception as exc:
+                log.warning("FFmpeg frame extract failed: %s", exc)
+
+            # Fallback to OpenCV
+            if frame is None:
+                try:
+                    cap = cv2.VideoCapture(path)
+                    if cap.isOpened():
+                        ret, bgr = cap.read()
+                        cap.release()
+                        if ret and bgr is not None:
+                            frame = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                            log.info("Frame extracted via OpenCV.")
+                except Exception as exc:
+                    log.warning("OpenCV frame read failed: %s", exc)
+
+            if frame is None:
+                # Last resort: create a placeholder frame
+                frame = np.zeros((info.height or 480, info.width or 640, 3), dtype=np.uint8)
+                # Draw text "Preview not available"
+                cv2.putText(
+                    frame, "Preview not available", (50, info.height // 2),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (128, 128, 128), 2,
+                )
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                log.warning("Using placeholder frame.")
+
+            if progress_callback:
+                progress_callback(80, "Preparing preview…")
+
+            rgb = np.ascontiguousarray(frame)
+            h, w = rgb.shape[:2]
+
+            if progress_callback:
+                progress_callback(100, "Video loaded.")
+
             return {"path": path, "info": info, "rgb": rgb, "w": w, "h": h}
 
         def _on_loaded(result):
@@ -353,8 +405,7 @@ class WatermarkRemovalPanel(QWidget):
                 qimg = QImage(rgb.data, w, h, w * 3, QImage.Format.Format_RGB888)
                 pixmap = QPixmap.fromImage(qimg.copy())
 
-                # Store reference to keep rgb alive until pixmap is created
-                self._frame_rgb_ref = rgb
+                self._frame_rgb_ref = rgb  # prevent GC
 
                 self.auto_preview._pixmap = pixmap
                 self.auto_preview._fit()
