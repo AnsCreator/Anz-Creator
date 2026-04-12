@@ -7,13 +7,12 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal, QSize
-from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QFont, QMouseEvent, QIcon
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QMouseEvent
 from PyQt6.QtWidgets import (
-    QWidget, QLabel, QProgressBar, QVBoxLayout, QHBoxLayout,
-    QPushButton, QFileDialog, QComboBox, QFrame, QSizePolicy,
-    QGroupBox, QLineEdit, QScrollArea, QMessageBox, QDialog,
-    QDialogButtonBox, QTextEdit,
+    QWidget, QLabel, QProgressBar, QVBoxLayout,
+    QPushButton, QFileDialog, QFrame,
+    QMessageBox, QDialog,
 )
 
 import numpy as np
