@@ -1,12 +1,15 @@
 """
 yt-dlp wrapper for URL-based video download.
 Supports YouTube, TikTok, Instagram, and 1000+ platforms.
+Auto-installs yt-dlp if not found.
 """
 
 from __future__ import annotations
 
 import os
+import sys
 import json
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from typing import Callable, Optional
@@ -26,10 +29,96 @@ class VideoMeta:
     formats: list[dict] = field(default_factory=list)
 
 
+def _normalize_url(url: str) -> str:
+    """Ensure URL has https:// prefix."""
+    url = url.strip().strip("\"'")
+    if not url:
+        return url
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    return url
+
+
+def _subprocess_flags() -> int:
+    """Return CREATE_NO_WINDOW on Windows to hide console popups."""
+    if os.name == "nt":
+        return subprocess.CREATE_NO_WINDOW
+    return 0
+
+
+def _find_ytdlp() -> str:
+    """
+    Find yt-dlp executable. Search order:
+    1. System PATH
+    2. Python Scripts folder (pip install location on Windows)
+    3. Auto-install via pip if not found
+    """
+    # 1. Check PATH
+    found = shutil.which("yt-dlp")
+    if found:
+        log.info("yt-dlp found in PATH: %s", found)
+        return found
+
+    # 2. Check Python Scripts folder
+    scripts_dir = os.path.join(os.path.dirname(sys.executable), "Scripts")
+    for name in ("yt-dlp.exe", "yt-dlp"):
+        p = os.path.join(scripts_dir, name)
+        if os.path.isfile(p):
+            log.info("yt-dlp found in Scripts: %s", p)
+            return p
+
+    # Check user-level Scripts (pip install --user)
+    if os.name == "nt":
+        user_base = os.environ.get("APPDATA", "")
+        user_scripts_candidates = [
+            os.path.join(user_base, "Python", "Scripts"),
+            os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "Python", "Scripts"),
+        ]
+        for d in user_scripts_candidates:
+            p = os.path.join(d, "yt-dlp.exe")
+            if os.path.isfile(p):
+                log.info("yt-dlp found: %s", p)
+                return p
+
+    # 3. Auto-install
+    log.warning("yt-dlp not found — installing via pip…")
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "yt-dlp"],
+            capture_output=True, text=True, timeout=120,
+            creationflags=_subprocess_flags(),
+        )
+        # Re-check after install
+        found = shutil.which("yt-dlp")
+        if found:
+            log.info("yt-dlp installed: %s", found)
+            return found
+        for name in ("yt-dlp.exe", "yt-dlp"):
+            p = os.path.join(scripts_dir, name)
+            if os.path.isfile(p):
+                log.info("yt-dlp installed: %s", p)
+                return p
+    except Exception as exc:
+        log.error("Failed to auto-install yt-dlp: %s", exc)
+
+    raise FileNotFoundError(
+        "yt-dlp not found and auto-install failed.\n"
+        "Please install manually:\n"
+        "  pip install yt-dlp\n"
+        "Or download from: https://github.com/yt-dlp/yt-dlp/releases"
+    )
+
+
 class Downloader:
     """Thin wrapper around yt-dlp CLI."""
 
-    YT_DLP = "yt-dlp"
+    _ytdlp_path: str = None
+
+    @classmethod
+    def _get_ytdlp(cls) -> str:
+        if cls._ytdlp_path is None:
+            cls._ytdlp_path = _find_ytdlp()
+        return cls._ytdlp_path
 
     # ── metadata ─────────────────────────────────────────
     @staticmethod
@@ -37,9 +126,15 @@ class Downloader:
         """
         Fetch video metadata (no download) — title, duration, thumbnail, qualities.
         """
+        url = _normalize_url(url)
+        if not url:
+            raise ValueError("URL is empty.")
+
+        ytdlp = Downloader._get_ytdlp()
         log.info("Fetching metadata for: %s", url)
+
         cmd = [
-            Downloader.YT_DLP,
+            ytdlp,
             "--dump-json",
             "--no-download",
             "--no-playlist",
@@ -47,15 +142,21 @@ class Downloader:
         ]
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=60,
+            creationflags=_subprocess_flags(),
         )
         if result.returncode != 0:
-            raise RuntimeError(f"yt-dlp metadata error: {result.stderr.strip()}")
+            stderr = result.stderr.strip()
+            if "is not recognized" in stderr or "not found" in stderr:
+                raise RuntimeError(
+                    "yt-dlp not found. Install with: pip install yt-dlp"
+                )
+            raise RuntimeError(f"yt-dlp error: {stderr}")
 
         info = json.loads(result.stdout)
         meta = VideoMeta(
             url=url,
             title=info.get("title", "Unknown"),
-            duration=info.get("duration", 0),
+            duration=info.get("duration") or 0,
             thumbnail=info.get("thumbnail", ""),
             platform=info.get("extractor", "unknown"),
         )
@@ -89,6 +190,9 @@ class Downloader:
         """
         Download video to output_dir. Returns path to downloaded file.
         """
+        url = _normalize_url(url)
+        ytdlp = Downloader._get_ytdlp()
+
         os.makedirs(output_dir, exist_ok=True)
         output_template = os.path.join(output_dir, "%(title).80s.%(ext)s")
 
@@ -96,12 +200,12 @@ class Downloader:
         h = height_map.get(quality, "1080")
 
         cmd = [
-            Downloader.YT_DLP,
+            ytdlp,
             "-f", f"bestvideo[height<={h}]+bestaudio/best[height<={h}]",
             "--merge-output-format", "mp4",
             "-o", output_template,
             "--no-playlist",
-            "--newline",            # one progress line per update
+            "--newline",
             url,
         ]
 
@@ -112,6 +216,7 @@ class Downloader:
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=1,
+            creationflags=_subprocess_flags(),
         )
 
         output_path = ""
@@ -122,29 +227,37 @@ class Downloader:
                 return ""
 
             line = line.strip()
-            # Parse yt-dlp progress lines like "[download]  45.2% of ~100MiB …"
+            # Parse yt-dlp progress lines: "[download]  45.2% of ~100MiB …"
             if "[download]" in line and "%" in line:
                 try:
                     pct_str = line.split("%")[0].split()[-1]
-                    pct = int(float(pct_str))
+                    pct = min(int(float(pct_str)), 100)
                     if progress_callback:
                         progress_callback(pct, f"Downloading… {pct}%")
                 except (ValueError, IndexError):
                     pass
-            # Capture final merged path
-            if "[Merger]" in line or "has already been downloaded" in line:
-                pass
             if "Destination:" in line:
                 output_path = line.split("Destination:")[-1].strip()
+            if "has already been downloaded" in line:
+                try:
+                    output_path = line.split("[download]")[-1].split("has already")[0].strip()
+                except Exception:
+                    pass
 
         proc.wait()
 
-        # If yt-dlp doesn't print Destination, find the file
+        # Fallback: find most recent .mp4 in output dir
         if not output_path or not os.path.isfile(output_path):
-            for f in os.listdir(output_dir):
-                if f.endswith(".mp4"):
-                    output_path = os.path.join(output_dir, f)
-                    break
+            mp4_files = [f for f in os.listdir(output_dir) if f.endswith(".mp4")]
+            if mp4_files:
+                mp4_files.sort(
+                    key=lambda f: os.path.getmtime(os.path.join(output_dir, f)),
+                    reverse=True,
+                )
+                output_path = os.path.join(output_dir, mp4_files[0])
+
+        if not output_path or not os.path.isfile(output_path):
+            raise RuntimeError("Download completed but output file not found.")
 
         if progress_callback:
             progress_callback(100, "Download complete.")
