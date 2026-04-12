@@ -6,11 +6,11 @@ Auto-installs yt-dlp if not found.
 
 from __future__ import annotations
 
-import os
-import sys
 import json
+import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from typing import Callable
 

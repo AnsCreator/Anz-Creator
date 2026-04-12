@@ -5,10 +5,11 @@ Video read/write utilities (metadata, frame access).
 from __future__ import annotations
 
 import os
-import cv2
-import numpy as np
 from dataclasses import dataclass
 from typing import Generator
+
+import cv2
+import numpy as np
 
 from utils.logger import log
 
