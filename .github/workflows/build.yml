@@ -16,10 +16,10 @@ jobs:
     name: Build .exe (Windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -39,7 +39,7 @@ jobs:
         run: Compress-Archive -Path dist/Anz-Creator/* -DestinationPath dist/Anz-Creator-Windows.zip
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: Anz-Creator-Windows
           path: dist/Anz-Creator-Windows.zip
@@ -53,10 +53,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: Anz-Creator-Windows
           path: ./release
