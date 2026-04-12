@@ -6,15 +6,12 @@ Currently: Watermark Removal panel with auto/manual mode tabs.
 from __future__ import annotations
 
 import os
-import cv2
 from typing import Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
     QPushButton, QComboBox, QLineEdit, QGroupBox, QFrame,
-    QFileDialog, QMessageBox, QSplitter, QScrollArea, QSizePolicy,
-    QSpacerItem,
+    QMessageBox, QScrollArea,
 )
 
 from ui.components import (
@@ -286,6 +283,10 @@ class WatermarkRemovalPanel(QWidget):
 
     def _load_video(self, path: str):
         try:
+            if not os.path.isfile(path):
+                self._show_error("File not found", f"Cannot find: {path}")
+                return
+
             self._video_path = path
             self._video_info = get_video_info(path)
             info = self._video_info
@@ -307,6 +308,8 @@ class WatermarkRemovalPanel(QWidget):
             self.progress.reset()
             log.info("Video loaded: %s", path)
         except Exception as exc:
+            import traceback
+            log.error("Failed to load video: %s\n%s", exc, traceback.format_exc())
             self._show_error("Cannot open video", str(exc))
 
     # ── Point tracking ───────────────────────────────────
@@ -352,11 +355,10 @@ class WatermarkRemovalPanel(QWidget):
             missing.append(("sam2", sam2_var))
 
         if missing:
+            model_list = "\n".join(f"  • {f}/{v}" for f, v in missing)
             reply = QMessageBox.question(
                 self, "Models Required",
-                f"Required model(s) not found:\n"
-                + "\n".join(f"  • {f}/{v}" for f, v in missing)
-                + "\n\nDownload now?",
+                f"Required model(s) not found:\n{model_list}\n\nDownload now?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.Yes:

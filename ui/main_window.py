@@ -4,19 +4,13 @@ Main Window — shell with sidebar navigation + content area.
 
 from __future__ import annotations
 
-import os
-import sys
-
-from PyQt6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QIcon, QFont, QAction, QPixmap, QPainter, QColor
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
-    QPushButton, QLabel, QFrame, QSplitter, QApplication, QSizePolicy,
-    QSpacerItem, QToolBar, QStatusBar, QMessageBox,
+    QPushButton, QLabel, QFrame,
 )
 
 from ui.feature_panel import WatermarkRemovalPanel, SettingsPanel
-from ui.components import SectionHeader
 from utils.logger import log
 
 
@@ -110,16 +104,16 @@ class Sidebar(QFrame):
         self.btn_placeholder1 = SidebarButton("Background Remove", "🖼️")
         self.btn_placeholder1.setEnabled(False)
         self.btn_placeholder1.setStyleSheet(
-            self.btn_placeholder1.styleSheet() +
-            "QPushButton:disabled { color: #37474f; }"
+            self.btn_placeholder1.styleSheet()
+            + "QPushButton:disabled { color: #37474f; }"
         )
         layout.addWidget(self.btn_placeholder1)
 
         self.btn_placeholder2 = SidebarButton("Video Enhance", "✨")
         self.btn_placeholder2.setEnabled(False)
         self.btn_placeholder2.setStyleSheet(
-            self.btn_placeholder2.styleSheet() +
-            "QPushButton:disabled { color: #37474f; }"
+            self.btn_placeholder2.styleSheet()
+            + "QPushButton:disabled { color: #37474f; }"
         )
         layout.addWidget(self.btn_placeholder2)
 
