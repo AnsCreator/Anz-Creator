@@ -46,13 +46,34 @@ def _subprocess_flags() -> int:
     return 0
 
 
+def _startupinfo():
+    """Return STARTUPINFO that hides the window on Windows."""
+    if os.name == "nt":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0  # SW_HIDE
+        return si
+    return None
+
+
 def _find_ytdlp() -> str:
     """
     Find yt-dlp executable. Search order:
-    1. System PATH
-    2. Python Scripts folder (pip install location on Windows)
-    3. Auto-install via pip if not found
+    1. Bundled in app data folder (previously auto-downloaded)
+    2. System PATH
+    3. Python Scripts folder (pip install location on Windows)
+    4. Auto-download standalone .exe from GitHub releases
     """
+    # App-local location (auto-downloaded binary lives here)
+    app_bin_dir = os.path.join(
+        os.environ.get("APPDATA", os.path.expanduser("~")),
+        "Anz-Creator", "bin",
+    )
+    app_ytdlp = os.path.join(app_bin_dir, "yt-dlp.exe" if os.name == "nt" else "yt-dlp")
+    if os.path.isfile(app_ytdlp):
+        log.info("yt-dlp found in app folder: %s", app_ytdlp)
+        return app_ytdlp
+
     # 1. Check PATH
     found = shutil.which("yt-dlp")
     if found:
@@ -72,7 +93,10 @@ def _find_ytdlp() -> str:
         user_base = os.environ.get("APPDATA", "")
         user_scripts_candidates = [
             os.path.join(user_base, "Python", "Scripts"),
-            os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "Python", "Scripts"),
+            os.path.join(
+                os.path.expanduser("~"),
+                "AppData", "Roaming", "Python", "Scripts",
+            ),
         ]
         for d in user_scripts_candidates:
             p = os.path.join(d, "yt-dlp.exe")
@@ -80,29 +104,44 @@ def _find_ytdlp() -> str:
                 log.info("yt-dlp found: %s", p)
                 return p
 
-    # 3. Auto-install
-    log.warning("yt-dlp not found — installing via pip…")
+    # 3. Auto-download standalone exe from GitHub releases
+    log.warning("yt-dlp not found — downloading standalone exe…")
     try:
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "yt-dlp"],
-            capture_output=True, text=True, timeout=120,
-            creationflags=_subprocess_flags(),
-        )
-        # Re-check after install
-        found = shutil.which("yt-dlp")
-        if found:
-            log.info("yt-dlp installed: %s", found)
-            return found
-        for name in ("yt-dlp.exe", "yt-dlp"):
-            p = os.path.join(scripts_dir, name)
-            if os.path.isfile(p):
-                log.info("yt-dlp installed: %s", p)
-                return p
+        import requests
+
+        if os.name == "nt":
+            url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+        else:
+            url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"
+
+        os.makedirs(app_bin_dir, exist_ok=True)
+        tmp_path = app_ytdlp + ".part"
+
+        log.info("Downloading yt-dlp from %s …", url)
+        resp = requests.get(url, stream=True, timeout=60, allow_redirects=True)
+        resp.raise_for_status()
+
+        with open(tmp_path, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=256 * 1024):
+                f.write(chunk)
+
+        os.rename(tmp_path, app_ytdlp)
+
+        # Make executable on Linux/macOS
+        if os.name != "nt":
+            os.chmod(app_ytdlp, 0o755)
+
+        log.info("yt-dlp downloaded to: %s", app_ytdlp)
+        return app_ytdlp
+
     except Exception as exc:
-        log.error("Failed to auto-install yt-dlp: %s", exc)
+        log.error("Failed to download yt-dlp: %s", exc)
+        # Clean up partial file
+        if os.path.exists(app_ytdlp + ".part"):
+            os.remove(app_ytdlp + ".part")
 
     raise FileNotFoundError(
-        "yt-dlp not found and auto-install failed.\n"
+        "yt-dlp not found and auto-download failed.\n"
         "Please install manually:\n"
         "  pip install yt-dlp\n"
         "Or download from: https://github.com/yt-dlp/yt-dlp/releases"
@@ -142,7 +181,7 @@ class Downloader:
         ]
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=60,
-            creationflags=_subprocess_flags(),
+            creationflags=_subprocess_flags(), startupinfo=_startupinfo(),
         )
         if result.returncode != 0:
             stderr = result.stderr.strip()
@@ -216,7 +255,7 @@ class Downloader:
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=1,
-            creationflags=_subprocess_flags(),
+            creationflags=_subprocess_flags(), startupinfo=_startupinfo(),
         )
 
         output_path = ""
