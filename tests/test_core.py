@@ -4,7 +4,6 @@ Unit tests for Anz-Creator core modules.
 
 import os
 import sys
-import tempfile
 
 import pytest
 import yaml
@@ -139,7 +138,7 @@ class TestDownloader:
     """Test core.downloader module (no network)."""
 
     def test_class_exists(self):
-        from core.downloader import Downloader, VideoMeta
+        from core.downloader import Downloader
         assert hasattr(Downloader, "fetch_metadata")
         assert hasattr(Downloader, "download")
 
@@ -156,7 +155,8 @@ class TestTaskQueue:
     """Test core.task_queue module."""
 
     def test_worker_signals(self):
-        from core.task_queue import Worker, WorkerSignals
+        from core.task_queue import Worker
+
         def dummy(progress_callback=None, cancel_flag=None):
             return 42
 
@@ -169,6 +169,7 @@ class TestTaskQueue:
 
     def test_worker_cancel(self):
         from core.task_queue import Worker
+
         def dummy(progress_callback=None, cancel_flag=None):
             return None
 
@@ -182,12 +183,12 @@ class TestWatermarkDetector:
     """Test features.watermark_removal.detector module."""
 
     def test_opencv_fallback_exists(self):
-        cv2 = pytest.importorskip("cv2")
+        pytest.importorskip("cv2")
         from features.watermark_removal.detector import WatermarkDetector
         assert hasattr(WatermarkDetector, "_opencv_fallback")
 
     def test_opencv_fallback_no_crash(self):
-        cv2 = pytest.importorskip("cv2")
+        pytest.importorskip("cv2")
         import numpy as np
         from features.watermark_removal.detector import WatermarkDetector
 
@@ -202,7 +203,7 @@ class TestInpainterPresets:
     """Test ProPainter preset configurations."""
 
     def test_presets_exist(self):
-        cv2 = pytest.importorskip("cv2")
+        pytest.importorskip("cv2")
         from features.watermark_removal.inpainter import ProPainterInpainter
         presets = ProPainterInpainter.PRESETS
         assert "lightweight" in presets
@@ -211,7 +212,7 @@ class TestInpainterPresets:
         assert "ultra_4k" in presets
 
     def test_standard_preset_values(self):
-        cv2 = pytest.importorskip("cv2")
+        pytest.importorskip("cv2")
         from features.watermark_removal.inpainter import ProPainterInpainter
         std = ProPainterInpainter.PRESETS["standard"]
         assert std["neighbor_length"] == 10
