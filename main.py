@@ -167,5 +167,9 @@ def _global_exception_handler(exc_type, exc_value, exc_tb):
 
 
 if __name__ == "__main__":
+    # Required for PyInstaller on Windows to prevent duplicate processes
+    import multiprocessing
+    multiprocessing.freeze_support()
+
     sys.excepthook = _global_exception_handler
     main()
