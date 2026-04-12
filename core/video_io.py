@@ -40,40 +40,104 @@ def _subprocess_silent():
     return cf, si
 
 
+def _app_bin_dir() -> str:
+    return os.path.join(
+        os.environ.get("APPDATA", os.path.expanduser("~")),
+        "Anz-Creator", "bin",
+    )
+
+
 def _find_ffprobe() -> str:
-    """Find ffprobe executable, checking common locations."""
+    """Find ffprobe executable, auto-downloads if needed."""
     import shutil
 
     found = shutil.which("ffprobe")
     if found:
         return found
-    # Check alongside yt-dlp in app bin folder
-    app_bin = os.path.join(
-        os.environ.get("APPDATA", os.path.expanduser("~")),
-        "Anz-Creator", "bin",
-    )
+    app_bin = _app_bin_dir()
     for name in ("ffprobe.exe", "ffprobe"):
         p = os.path.join(app_bin, name)
         if os.path.isfile(p):
             return p
-    return "ffprobe"  # hope it's in PATH
+    # Auto-download (same package as ffmpeg)
+    if os.name == "nt":
+        _auto_download_ffmpeg(app_bin)
+        p = os.path.join(app_bin, "ffprobe.exe")
+        if os.path.isfile(p):
+            return p
+    return "ffprobe"
 
 
 def _find_ffmpeg() -> str:
-    """Find ffmpeg executable."""
+    """Find ffmpeg executable, auto-downloads if needed."""
     import shutil
 
     found = shutil.which("ffmpeg")
     if found:
         return found
-    app_bin = os.path.join(
-        os.environ.get("APPDATA", os.path.expanduser("~")),
-        "Anz-Creator", "bin",
-    )
+    app_bin = _app_bin_dir()
     for name in ("ffmpeg.exe", "ffmpeg"):
         p = os.path.join(app_bin, name)
         if os.path.isfile(p):
             return p
+    # Auto-download
+    if os.name == "nt":
+        return _auto_download_ffmpeg(app_bin)
+    return "ffmpeg"
+
+
+def _auto_download_ffmpeg(app_bin: str) -> str:
+    """
+    Download FFmpeg essentials for Windows (~90MB zip).
+    Extracts ffmpeg.exe + ffprobe.exe to app_bin folder.
+    Returns path to ffmpeg.exe.
+    """
+    import io
+    import shutil as _shutil
+    import zipfile
+
+    import requests
+
+    url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+    os.makedirs(app_bin, exist_ok=True)
+    ffmpeg_dest = os.path.join(app_bin, "ffmpeg.exe")
+
+    if os.path.isfile(ffmpeg_dest):
+        return ffmpeg_dest
+
+    log.info("FFmpeg not found — downloading (~90MB)…")
+    try:
+        resp = requests.get(url, stream=True, timeout=180, allow_redirects=True)
+        resp.raise_for_status()
+
+        data = io.BytesIO()
+        total = int(resp.headers.get("content-length", 0))
+        downloaded = 0
+        for chunk in resp.iter_content(chunk_size=512 * 1024):
+            data.write(chunk)
+            downloaded += len(chunk)
+            if total > 0 and downloaded % (5 * 1024 * 1024) < 512 * 1024:
+                log.info("Downloading FFmpeg… %d%%", downloaded * 100 // total)
+
+        data.seek(0)
+        log.info("Extracting ffmpeg.exe and ffprobe.exe…")
+
+        with zipfile.ZipFile(data) as zf:
+            for member in zf.namelist():
+                basename = os.path.basename(member)
+                if basename in ("ffmpeg.exe", "ffprobe.exe", "ffplay.exe"):
+                    target = os.path.join(app_bin, basename)
+                    with zf.open(member) as src, open(target, "wb") as dst:
+                        _shutil.copyfileobj(src, dst)
+                    log.info("Extracted: %s", target)
+
+        if os.path.isfile(ffmpeg_dest):
+            log.info("FFmpeg ready: %s", ffmpeg_dest)
+            return ffmpeg_dest
+
+    except Exception as exc:
+        log.error("FFmpeg download failed: %s", exc)
+
     return "ffmpeg"
 
 
