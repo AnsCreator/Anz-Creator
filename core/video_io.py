@@ -1,10 +1,13 @@
 """
 Video read/write utilities (metadata, frame access).
+Uses OpenCV with ffprobe fallback for robust metadata reading.
 """
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 from dataclasses import dataclass
 from typing import Generator
 
@@ -25,26 +28,145 @@ class VideoInfo:
     codec: str
 
 
+def _subprocess_silent():
+    """Return (creationflags, startupinfo) to hide console on Windows."""
+    cf = 0
+    si = None
+    if os.name == "nt":
+        cf = subprocess.CREATE_NO_WINDOW
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0
+    return cf, si
+
+
+def _find_ffprobe() -> str:
+    """Find ffprobe executable, checking common locations."""
+    import shutil
+
+    found = shutil.which("ffprobe")
+    if found:
+        return found
+    # Check alongside yt-dlp in app bin folder
+    app_bin = os.path.join(
+        os.environ.get("APPDATA", os.path.expanduser("~")),
+        "Anz-Creator", "bin",
+    )
+    for name in ("ffprobe.exe", "ffprobe"):
+        p = os.path.join(app_bin, name)
+        if os.path.isfile(p):
+            return p
+    return "ffprobe"  # hope it's in PATH
+
+
+def _find_ffmpeg() -> str:
+    """Find ffmpeg executable."""
+    import shutil
+
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    app_bin = os.path.join(
+        os.environ.get("APPDATA", os.path.expanduser("~")),
+        "Anz-Creator", "bin",
+    )
+    for name in ("ffmpeg.exe", "ffmpeg"):
+        p = os.path.join(app_bin, name)
+        if os.path.isfile(p):
+            return p
+    return "ffmpeg"
+
+
 def get_video_info(path: str) -> VideoInfo:
-    """Read video metadata using OpenCV."""
+    """Read video metadata. Tries OpenCV first, falls back to ffprobe."""
     if not os.path.isfile(path):
         raise FileNotFoundError(f"Video file not found: {path}")
-    # Use numpy-based open for Unicode path support on Windows
-    cap = cv2.VideoCapture(path)
-    if not cap.isOpened():
-        raise IOError(f"Cannot open video: {path}")
+
+    # Try OpenCV first (fast)
+    width, height, fps, frame_count, codec = 0, 0, 0.0, 0, ""
+    try:
+        cap = cv2.VideoCapture(path)
+        if cap.isOpened():
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            codec = _fourcc_to_str(int(cap.get(cv2.CAP_PROP_FOURCC)))
+            cap.release()
+    except Exception as exc:
+        log.warning("OpenCV metadata failed: %s", exc)
+
+    # If OpenCV returned invalid data, try ffprobe
+    if width <= 0 or height <= 0 or fps <= 0:
+        log.info("OpenCV returned %dx%d — trying ffprobe…", width, height)
+        try:
+            cf, si = _subprocess_silent()
+            cmd = [
+                _find_ffprobe(),
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries",
+                "stream=width,height,r_frame_rate,nb_frames,codec_name",
+                "-show_entries", "format=duration",
+                "-of", "json",
+                path,
+            ]
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=10,
+                creationflags=cf, startupinfo=si,
+            )
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                stream = data.get("streams", [{}])[0]
+                fmt = data.get("format", {})
+
+                width = int(stream.get("width", 0)) or width
+                height = int(stream.get("height", 0)) or height
+                codec = stream.get("codec_name", codec) or codec
+
+                # Parse r_frame_rate like "30/1" or "30000/1001"
+                rfr = stream.get("r_frame_rate", "")
+                if "/" in rfr:
+                    num, den = rfr.split("/")
+                    fps = float(num) / float(den) if float(den) > 0 else fps
+                elif rfr:
+                    fps = float(rfr)
+
+                nb = stream.get("nb_frames", "")
+                if nb and nb != "N/A":
+                    frame_count = int(nb)
+
+                dur_str = fmt.get("duration", "")
+                if dur_str and fps > 0 and frame_count <= 0:
+                    frame_count = int(float(dur_str) * fps)
+
+                log.info(
+                    "ffprobe info: %dx%d @ %.1ffps, %d frames, codec=%s",
+                    width, height, fps, frame_count, codec,
+                )
+        except Exception as exc:
+            log.warning("ffprobe failed: %s", exc)
+
+    # Final defaults
+    fps = fps or 30.0
+    width = width or 640
+    height = height or 480
+
+    duration = frame_count / fps if fps > 0 and frame_count > 0 else 0
+
     info = VideoInfo(
         path=path,
-        width=int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-        height=int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-        fps=cap.get(cv2.CAP_PROP_FPS) or 30.0,
-        frame_count=int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
-        duration=0,
-        codec=_fourcc_to_str(int(cap.get(cv2.CAP_PROP_FOURCC))),
+        width=width,
+        height=height,
+        fps=fps,
+        frame_count=frame_count,
+        duration=duration,
+        codec=codec,
     )
-    info.duration = info.frame_count / info.fps if info.fps > 0 else 0
-    cap.release()
-    log.info("Video info: %dx%d @ %.1ffps, %d frames", info.width, info.height, info.fps, info.frame_count)
+    log.info(
+        "Video info: %dx%d @ %.1ffps, %d frames (%.1fs)",
+        info.width, info.height, info.fps, info.frame_count, info.duration,
+    )
     return info
 
 
