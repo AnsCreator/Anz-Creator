@@ -182,10 +182,12 @@ class TestWatermarkDetector:
     """Test features.watermark_removal.detector module."""
 
     def test_opencv_fallback_exists(self):
+        cv2 = pytest.importorskip("cv2")
         from features.watermark_removal.detector import WatermarkDetector
         assert hasattr(WatermarkDetector, "_opencv_fallback")
 
     def test_opencv_fallback_no_crash(self):
+        cv2 = pytest.importorskip("cv2")
         import numpy as np
         from features.watermark_removal.detector import WatermarkDetector
 
@@ -200,6 +202,7 @@ class TestInpainterPresets:
     """Test ProPainter preset configurations."""
 
     def test_presets_exist(self):
+        cv2 = pytest.importorskip("cv2")
         from features.watermark_removal.inpainter import ProPainterInpainter
         presets = ProPainterInpainter.PRESETS
         assert "lightweight" in presets
@@ -208,6 +211,7 @@ class TestInpainterPresets:
         assert "ultra_4k" in presets
 
     def test_standard_preset_values(self):
+        cv2 = pytest.importorskip("cv2")
         from features.watermark_removal.inpainter import ProPainterInpainter
         std = ProPainterInpainter.PRESETS["standard"]
         assert std["neighbor_length"] == 10
