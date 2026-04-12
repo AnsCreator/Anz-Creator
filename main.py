@@ -147,5 +147,27 @@ def main():
     sys.exit(app.exec())
 
 
+def _global_exception_handler(exc_type, exc_value, exc_tb):
+    """Catch unhandled exceptions, log them, and show a dialog."""
+    import traceback
+    tb_str = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    log.critical("Unhandled exception:\n%s", tb_str)
+
+    # Try to show a message box
+    try:
+        from PyQt6.QtWidgets import QMessageBox, QApplication
+        app = QApplication.instance()
+        if app:
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Icon.Critical)
+            msg.setWindowTitle("Anz-Creator — Error")
+            msg.setText("An unexpected error occurred.")
+            msg.setDetailedText(tb_str)
+            msg.exec()
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
+    sys.excepthook = _global_exception_handler
     main()
