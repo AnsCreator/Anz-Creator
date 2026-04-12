@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
+import cv2
 import numpy as np
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QImage, QMouseEvent, QPainter, QPixmap
@@ -68,19 +69,35 @@ class VideoPreview(QLabel):
         self._pixmap: Optional[QPixmap] = None
 
     def set_frame(self, frame: np.ndarray):
-        """Display an OpenCV BGR frame."""
-        if frame is None or frame.size == 0:
-            return
-        h, w = frame.shape[:2]
-        ch = frame.shape[2] if frame.ndim == 3 else 1
-        # Ensure contiguous RGB copy (must stay alive while QImage exists)
-        rgb = np.ascontiguousarray(frame[..., ::-1]) if ch == 3 else frame.copy()
-        self._rgb_ref = rgb  # prevent garbage collection
-        bytes_per_line = w * ch
-        fmt = QImage.Format.Format_RGB888 if ch == 3 else QImage.Format.Format_Grayscale8
-        qimg = QImage(rgb.data, w, h, bytes_per_line, fmt)
-        self._pixmap = QPixmap.fromImage(qimg.copy())  # deep copy to decouple from numpy
-        self._fit()
+        """Display an OpenCV BGR/BGRA/grayscale frame safely."""
+        try:
+            if frame is None or frame.size == 0:
+                return
+            h, w = frame.shape[:2]
+            ch = frame.shape[2] if frame.ndim == 3 else 1
+
+            # Convert to RGB888 regardless of input format
+            if ch == 4:
+                # BGRA → RGB
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
+            elif ch == 3:
+                # BGR → RGB
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            elif ch == 1 or frame.ndim == 2:
+                # Grayscale → RGB
+                rgb = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+            else:
+                return
+
+            rgb = np.ascontiguousarray(rgb)
+            self._rgb_ref = rgb  # prevent garbage collection
+            qimg = QImage(
+                rgb.data, w, h, w * 3, QImage.Format.Format_RGB888
+            )
+            self._pixmap = QPixmap.fromImage(qimg.copy())
+            self._fit()
+        except Exception:
+            pass  # Silently fail rather than crash the app
 
     def set_pixmap_file(self, path: str):
         self._pixmap = QPixmap(path)
