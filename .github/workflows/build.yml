@@ -1,23 +1,69 @@
-name: Build Windows Release
+name: Build & Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Release version (e.g. 1.0.0)"
-        required: true
-        default: "1.0.0"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  # Auto-increment version and create tag
+  version:
+    name: Auto Version Tag
+    runs-on: ubuntu-latest
+    outputs:
+      new_tag: ${{ steps.tag.outputs.new_tag }}
+      changelog: ${{ steps.tag.outputs.changelog }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for tag detection
+
+      - name: Get latest tag and bump
+        id: tag
+        run: |
+          # Get latest tag matching v*.*.*.* pattern
+          LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+
+          if [ -z "$LATEST" ]; then
+            NEW_TAG="v1.0.0.1"
+          else
+            # Extract parts
+            BASE=$(echo "$LATEST" | sed 's/\.[0-9]*$//')
+            BUILD=$(echo "$LATEST" | grep -oE '[0-9]+$')
+            NEXT=$((BUILD + 1))
+            NEW_TAG="${BASE}.${NEXT}"
+          fi
+
+          echo "Latest: $LATEST -> New: $NEW_TAG"
+          echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
+
+          # Generate changelog from commits since last tag
+          if [ -n "$LATEST" ]; then
+            CHANGELOG=$(git log ${LATEST}..HEAD --pretty=format:"- %s" --no-merges | head -20)
+          else
+            CHANGELOG=$(git log --pretty=format:"- %s" --no-merges | head -20)
+          fi
+          # Escape multiline for GitHub output
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "changelog<<$EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "$EOF" >> $GITHUB_OUTPUT
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag ${{ steps.tag.outputs.new_tag }}
+          git push origin ${{ steps.tag.outputs.new_tag }}
+
+  # Build Windows .exe
   build-windows:
     name: Build .exe (Windows)
     runs-on: windows-latest
+    needs: version
     steps:
       - uses: actions/checkout@v4
 
@@ -35,8 +81,15 @@ jobs:
       - name: Install FFmpeg
         run: choco install ffmpeg -y
 
+      - name: Write version file
+        run: |
+          echo '${{ needs.version.outputs.new_tag }}' > version.txt
+
       - name: Build with PyInstaller
         run: pyinstaller anz_creator.spec
+
+      - name: Copy version file to dist
+        run: Copy-Item version.txt dist/Anz-Creator/
 
       - name: Zip output
         run: Compress-Archive -Path dist/Anz-Creator/* -DestinationPath dist/Anz-Creator-Windows.zip
@@ -48,11 +101,11 @@ jobs:
           path: dist/Anz-Creator-Windows.zip
           retention-days: 30
 
+  # Create GitHub Release
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: build-windows
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [version, build-windows]
     permissions:
       contents: write
     steps:
@@ -64,19 +117,18 @@ jobs:
           name: Anz-Creator-Windows
           path: ./release
 
-      - name: Get version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.VERSION }}
-          name: "Anz-Creator ${{ steps.version.outputs.VERSION }}"
+          tag_name: ${{ needs.version.outputs.new_tag }}
+          name: "Anz-Creator ${{ needs.version.outputs.new_tag }}"
           body: |
-            ## Anz-Creator ${{ steps.version.outputs.VERSION }}
+            ## Anz-Creator ${{ needs.version.outputs.new_tag }}
 
-            ### What's included
+            ### Changes
+            ${{ needs.version.outputs.changelog }}
+
+            ### Features
             - Watermark Removal (Auto YOLOv8 + Manual SAM2)
             - ProPainter video inpainting
             - yt-dlp + FFmpeg auto-download on first run
