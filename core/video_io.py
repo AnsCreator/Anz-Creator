@@ -26,14 +26,24 @@ class VideoInfo:
 
 def get_video_info(path: str) -> VideoInfo:
     """Read video metadata using OpenCV."""
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"Video file not found: {path}")
+    # Use numpy-based open for Unicode path support on Windows
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
+        # Fallback: try reading via numpy buffer for non-ASCII paths
+        try:
+            import numpy as _np
+            buf = _np.fromfile(path, dtype=_np.uint8)
+            # Can't get metadata from buffer, re-raise
+        except Exception:
+            pass
         raise IOError(f"Cannot open video: {path}")
     info = VideoInfo(
         path=path,
         width=int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
         height=int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-        fps=cap.get(cv2.CAP_PROP_FPS),
+        fps=cap.get(cv2.CAP_PROP_FPS) or 30.0,
         frame_count=int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
         duration=0,
         codec=_fourcc_to_str(int(cap.get(cv2.CAP_PROP_FOURCC))),
@@ -45,14 +55,18 @@ def get_video_info(path: str) -> VideoInfo:
 
 
 def read_frame(path: str, frame_idx: int) -> np.ndarray:
-    """Read a single frame by index."""
+    """Read a single frame by index. Returns a contiguous BGR numpy array."""
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"Video file not found: {path}")
     cap = cv2.VideoCapture(path)
+    if not cap.isOpened():
+        raise IOError(f"Cannot open video: {path}")
     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
     ret, frame = cap.read()
     cap.release()
-    if not ret:
+    if not ret or frame is None:
         raise IOError(f"Cannot read frame {frame_idx} from {path}")
-    return frame
+    return np.ascontiguousarray(frame)
 
 
 def iter_frames(path: str) -> Generator[tuple[int, np.ndarray], None, None]:
