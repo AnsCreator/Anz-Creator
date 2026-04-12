@@ -286,44 +286,101 @@ class WatermarkRemovalPanel(QWidget):
 
     # ── Local file handler ───────────────────────────────
     def _on_local_file(self, path: str):
-        self._load_video(path)
+        self._load_video_async(path)
 
     def _on_video_ready(self, path: str):
         if path:
-            self._load_video(path)
+            self._load_video_async(path)
         self.download_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
 
-    def _load_video(self, path: str):
-        try:
-            if not os.path.isfile(path):
-                self._show_error("File not found", f"Cannot find: {path}")
-                return
+    def _load_video_async(self, path: str):
+        """Load video in background thread to prevent UI freeze/crash."""
+        if not os.path.isfile(path):
+            self._show_error("File not found", f"Cannot find: {path}")
+            return
 
-            self._video_path = path
-            self._video_info = get_video_info(path)
-            info = self._video_info
+        self.progress.update_progress(0, "Loading video…")
 
-            self.info_bar.setText(
-                f"<b>{os.path.basename(path)}</b>  •  "
-                f"{info.width}×{info.height}  •  {info.fps:.1f} fps  •  "
-                f"{info.frame_count} frames  •  {info.duration:.1f}s"
-            )
-            self.info_bar.show()
+        def _do_load(progress_callback=None, cancel_flag=None):
+            import cv2
 
-            # Show first frame in previews
-            frame = read_frame(path, 0)
-            self.auto_preview.set_frame(frame)
-            self.click_frame.set_frame(frame)
+            info = get_video_info(path)
 
-            self.auto_detect_btn.setEnabled(True)
-            self.manual_run_btn.setEnabled(True)
+            # Read first frame safely
+            cap = cv2.VideoCapture(path)
+            if not cap.isOpened():
+                raise IOError(f"Cannot open video: {path}")
+            ret, frame = cap.read()
+            cap.release()
+
+            if not ret or frame is None:
+                raise IOError(f"Cannot read first frame from: {path}")
+
+            # Convert to RGB in the worker thread (safe from UI crash)
+            h, w = frame.shape[:2]
+            ch = frame.shape[2] if frame.ndim == 3 else 1
+            if ch == 4:
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
+            elif ch == 3:
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            else:
+                rgb = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+
+            import numpy as np
+
+            rgb = np.ascontiguousarray(rgb)
+            return {"path": path, "info": info, "rgb": rgb, "w": w, "h": h}
+
+        def _on_loaded(result):
+            try:
+                from PyQt6.QtGui import QImage, QPixmap
+
+                self._video_path = result["path"]
+                self._video_info = result["info"]
+                info = result["info"]
+
+                self.info_bar.setText(
+                    f"<b>{os.path.basename(result['path'])}</b>  •  "
+                    f"{info.width}×{info.height}  •  {info.fps:.1f} fps  •  "
+                    f"{info.frame_count} frames  •  {info.duration:.1f}s"
+                )
+                self.info_bar.show()
+
+                # Create QPixmap from pre-converted RGB data
+                rgb = result["rgb"]
+                w, h = result["w"], result["h"]
+                qimg = QImage(rgb.data, w, h, w * 3, QImage.Format.Format_RGB888)
+                pixmap = QPixmap.fromImage(qimg.copy())
+
+                # Store reference to keep rgb alive until pixmap is created
+                self._frame_rgb_ref = rgb
+
+                self.auto_preview._pixmap = pixmap
+                self.auto_preview._fit()
+                self.click_frame._pixmap = pixmap
+                self.click_frame._original_size = (w, h)
+                self.click_frame._points.clear()
+                self.click_frame._fit()
+
+                self.auto_detect_btn.setEnabled(True)
+                self.manual_run_btn.setEnabled(True)
+                self.progress.reset()
+                log.info("Video loaded: %s", result["path"])
+            except Exception as exc:
+                import traceback
+
+                log.error("UI update failed: %s\n%s", exc, traceback.format_exc())
+                self._show_error("Display Error", str(exc))
+
+        def _on_load_error(err):
             self.progress.reset()
-            log.info("Video loaded: %s", path)
-        except Exception as exc:
-            import traceback
-            log.error("Failed to load video: %s\n%s", exc, traceback.format_exc())
-            self._show_error("Cannot open video", str(exc))
+            self._show_error("Cannot open video", err)
+
+        worker = Worker(_do_load)
+        worker.signals.finished.connect(_on_loaded)
+        worker.signals.error.connect(_on_load_error)
+        self.task_queue.submit(worker)
 
     # ── Point tracking ───────────────────────────────────
     def _on_point_added(self, x: int, y: int):
