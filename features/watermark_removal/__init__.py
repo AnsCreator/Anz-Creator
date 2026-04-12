@@ -9,7 +9,6 @@ import os
 import shutil
 from typing import Callable
 
-from utils.logger import log
 from utils.ffmpeg_wrapper import FFmpegWrapper
 from utils.scene_detector import detect_scenes
 from core.video_io import get_video_info
