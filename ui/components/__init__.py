@@ -7,15 +7,20 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QMouseEvent
-from PyQt6.QtWidgets import (
-    QWidget, QLabel, QProgressBar, QVBoxLayout,
-    QPushButton, QFileDialog, QFrame,
-    QMessageBox, QDialog,
-)
-
 import numpy as np
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QImage, QMouseEvent, QPainter, QPixmap
+from PyQt6.QtWidgets import (
+    QDialog,
+    QFileDialog,
+    QFrame,
+    QLabel,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 # ── Styled Progress Bar ─────────────────────────────────
