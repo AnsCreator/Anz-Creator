@@ -27,7 +27,7 @@ from core.downloader import Downloader, VideoMeta
 from core.model_manager import ModelManager
 from core.settings import Settings
 from core.task_queue import TaskQueue, Worker
-from core.video_io import VideoInfo, get_video_info, read_frame
+from core.video_io import VideoInfo, get_video_info
 from features.watermark_removal import WatermarkRemovalPipeline
 from ui.components import (
     ClickableFrame,
