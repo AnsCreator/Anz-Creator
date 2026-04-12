@@ -41,7 +41,6 @@ def detect_scenes(
     scene_mgr.detect_scenes(video)
 
     scene_list = scene_mgr.get_scene_list()
-    fps = video.frame_rate
 
     results = []
     for start_time, end_time in scene_list:
