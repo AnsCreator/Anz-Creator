@@ -9,21 +9,34 @@ import os
 from typing import Optional
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
-    QPushButton, QComboBox, QLineEdit, QGroupBox, QFrame,
-    QMessageBox, QScrollArea,
+    QComboBox,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
-from ui.components import (
-    ProgressPanel, VideoPreview, ClickableFrame, FileDropZone,
-    SectionHeader, ModelDownloadDialog,
-)
-from core.task_queue import TaskQueue, Worker
 from core.downloader import Downloader, VideoMeta
-from core.video_io import get_video_info, read_frame, VideoInfo
-from core.settings import Settings
 from core.model_manager import ModelManager
+from core.settings import Settings
+from core.task_queue import TaskQueue, Worker
+from core.video_io import VideoInfo, get_video_info, read_frame
 from features.watermark_removal import WatermarkRemovalPipeline
+from ui.components import (
+    ClickableFrame,
+    FileDropZone,
+    ModelDownloadDialog,
+    ProgressPanel,
+    SectionHeader,
+    VideoPreview,
+)
 from utils.logger import log
 
 

@@ -6,11 +6,17 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
-    QPushButton, QLabel, QFrame,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
-from ui.feature_panel import WatermarkRemovalPanel, SettingsPanel
+from ui.feature_panel import SettingsPanel, WatermarkRemovalPanel
 from utils.logger import log
 
 
