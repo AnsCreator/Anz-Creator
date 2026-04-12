@@ -8,7 +8,6 @@ from __future__ import annotations
 import os
 import cv2
 import numpy as np
-from pathlib import Path
 from typing import Callable, Optional
 
 from utils.logger import log

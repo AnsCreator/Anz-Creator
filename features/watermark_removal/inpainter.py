@@ -75,7 +75,6 @@ class ProPainterInpainter:
         Returns output_dir.
         """
         self._load_model()
-        import torch
 
         os.makedirs(output_dir, exist_ok=True)
 
@@ -102,8 +101,6 @@ class ProPainterInpainter:
 
         # Process in temporal windows for memory efficiency
         neighbor_len = self.params["neighbor_length"]
-        ref_len = self.params["ref_length"]
-        window_size = neighbor_len * 2 + 1
 
         for i in range(total):
             if cancel_flag and cancel_flag():
@@ -121,7 +118,6 @@ class ProPainterInpainter:
                 context_start = max(0, i - neighbor_len)
                 context_end = min(total, i + neighbor_len + 1)
                 context_frames = frames[context_start:context_end]
-                context_masks = masks[context_start:context_end]
                 rel_idx = i - context_start
 
                 # Run inpainting on this window

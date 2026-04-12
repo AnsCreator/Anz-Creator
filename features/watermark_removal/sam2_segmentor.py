@@ -8,8 +8,7 @@ from __future__ import annotations
 import os
 import cv2
 import numpy as np
-from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
 from utils.logger import log
 
@@ -32,7 +31,7 @@ class SAM2Segmentor:
         if self._predictor is not None:
             return
         try:
-            import torch
+            import torch  # noqa: F401 — required by sam2
             from sam2.build_sam import build_sam2
             from sam2.sam2_image_predictor import SAM2ImagePredictor
             from sam2.sam2_video_predictor import SAM2VideoPredictor
@@ -69,7 +68,6 @@ class SAM2Segmentor:
         Returns binary mask (H, W) uint8 with 255 for watermark.
         """
         self._load_model()
-        import torch
 
         if click_labels is None:
             click_labels = [1] * len(click_points)
