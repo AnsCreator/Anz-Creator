@@ -65,10 +65,17 @@ class VideoPreview(QLabel):
 
     def set_frame(self, frame: np.ndarray):
         """Display an OpenCV BGR frame."""
-        h, w, ch = frame.shape
-        rgb = frame[..., ::-1].copy()  # BGR → RGB
-        qimg = QImage(rgb.data, w, h, w * ch, QImage.Format.Format_RGB888)
-        self._pixmap = QPixmap.fromImage(qimg)
+        if frame is None or frame.size == 0:
+            return
+        h, w = frame.shape[:2]
+        ch = frame.shape[2] if frame.ndim == 3 else 1
+        # Ensure contiguous RGB copy (must stay alive while QImage exists)
+        rgb = np.ascontiguousarray(frame[..., ::-1]) if ch == 3 else frame.copy()
+        self._rgb_ref = rgb  # prevent garbage collection
+        bytes_per_line = w * ch
+        fmt = QImage.Format.Format_RGB888 if ch == 3 else QImage.Format.Format_Grayscale8
+        qimg = QImage(rgb.data, w, h, bytes_per_line, fmt)
+        self._pixmap = QPixmap.fromImage(qimg.copy())  # deep copy to decouple from numpy
         self._fit()
 
     def set_pixmap_file(self, path: str):
