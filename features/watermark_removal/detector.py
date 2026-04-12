@@ -6,9 +6,10 @@ Outputs binary masks for detected watermarks.
 from __future__ import annotations
 
 import os
+from typing import Callable, Optional
+
 import cv2
 import numpy as np
-from typing import Callable, Optional
 
 from utils.logger import log
 

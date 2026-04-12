@@ -6,9 +6,10 @@ User clicks on watermark → SAM2 segments + propagates across frames.
 from __future__ import annotations
 
 import os
+from typing import Callable
+
 import cv2
 import numpy as np
-from typing import Callable
 
 from utils.logger import log
 

@@ -9,13 +9,13 @@ import os
 import shutil
 from typing import Callable
 
+from core.video_io import get_video_info
 from utils.ffmpeg_wrapper import FFmpegWrapper
 from utils.scene_detector import detect_scenes
-from core.video_io import get_video_info
 
 from .detector import WatermarkDetector
-from .sam2_segmentor import SAM2Segmentor
 from .inpainter import ProPainterInpainter
+from .sam2_segmentor import SAM2Segmentor
 
 
 class WatermarkRemovalPipeline:
