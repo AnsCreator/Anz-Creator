@@ -6,7 +6,7 @@ All heavy processing runs here so the UI never freezes.
 from __future__ import annotations
 
 import traceback
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal, pyqtSlot
 

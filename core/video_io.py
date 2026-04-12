@@ -31,13 +31,6 @@ def get_video_info(path: str) -> VideoInfo:
     # Use numpy-based open for Unicode path support on Windows
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
-        # Fallback: try reading via numpy buffer for non-ASCII paths
-        try:
-            import numpy as _np
-            buf = _np.fromfile(path, dtype=_np.uint8)
-            # Can't get metadata from buffer, re-raise
-        except Exception:
-            pass
         raise IOError(f"Cannot open video: {path}")
     info = VideoInfo(
         path=path,
