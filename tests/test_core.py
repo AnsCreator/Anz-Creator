@@ -190,6 +190,7 @@ class TestWatermarkDetector:
     def test_opencv_fallback_no_crash(self):
         pytest.importorskip("cv2")
         import numpy as np
+
         from features.watermark_removal.detector import WatermarkDetector
 
         # Create a blank frame
