@@ -11,15 +11,18 @@ on:
         required: true
         default: "1.0.0"
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build-windows:
     name: Build .exe (Windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
@@ -39,7 +42,7 @@ jobs:
         run: Compress-Archive -Path dist/Anz-Creator/* -DestinationPath dist/Anz-Creator-Windows.zip
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: Anz-Creator-Windows
           path: dist/Anz-Creator-Windows.zip
@@ -53,10 +56,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: Download artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v4
         with:
           name: Anz-Creator-Windows
           path: ./release
@@ -76,16 +79,15 @@ jobs:
             ### What's included
             - Watermark Removal (Auto YOLOv8 + Manual SAM2)
             - ProPainter video inpainting
-            - yt-dlp support for 1000+ platforms
+            - yt-dlp + FFmpeg auto-download on first run
             - PyQt6 dark material UI
 
             ### Requirements
             - Windows 10/11 64-bit
             - NVIDIA GPU with 4-12GB VRAM (recommended)
-            - FFmpeg installed and in PATH
 
             ### First run
-            AI models will auto-download on first use (~150MB default).
+            yt-dlp, FFmpeg, and AI models auto-download on first use.
           files: ./release/Anz-Creator-Windows.zip
           draft: false
           prerelease: false
