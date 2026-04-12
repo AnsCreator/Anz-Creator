@@ -233,7 +233,7 @@ class WatermarkRemovalPanel(QWidget):
         if not url:
             return
         self.fetch_btn.setEnabled(False)
-        self.meta_label.setText("Fetching…")
+        self.meta_label.setText("Preparing yt-dlp… (may download on first use)")
 
         def _fetch(progress_callback=None, cancel_flag=None):
             return Downloader.fetch_metadata(url)
