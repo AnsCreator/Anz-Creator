@@ -137,6 +137,11 @@ class Sidebar(QFrame):
         self.buttons.append(self.btn_settings)
         layout.addWidget(self.btn_settings)
 
+        # Debug Log
+        self.btn_debug = SidebarButton("Debug Log", "🐛")
+        self.buttons.append(self.btn_debug)
+        layout.addWidget(self.btn_debug)
+
         # About
         self.btn_about = SidebarButton("About", "ℹ️")
         layout.addWidget(self.btn_about)
@@ -187,6 +192,116 @@ class AboutPanel(QWidget):
         layout.addStretch()
 
 
+class DebugPanel(QWidget):
+    """Live debug log viewer — shows application logs in real-time."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(8)
+
+        # Header
+        header_row = QHBoxLayout()
+        title = QLabel("🐛  Debug Log")
+        title.setStyleSheet(
+            "font-size: 16px; font-weight: bold; color: #e0e0e0;"
+        )
+        header_row.addWidget(title)
+        header_row.addStretch()
+
+        self.clear_btn = QPushButton("Clear")
+        self.clear_btn.setFixedWidth(70)
+        self.clear_btn.clicked.connect(self._clear)
+        header_row.addWidget(self.clear_btn)
+
+        self.copy_btn = QPushButton("Copy All")
+        self.copy_btn.setFixedWidth(80)
+        self.copy_btn.clicked.connect(self._copy_all)
+        header_row.addWidget(self.copy_btn)
+
+        layout.addLayout(header_row)
+
+        # Log text area
+        from PyQt6.QtWidgets import QPlainTextEdit
+
+        self.log_text = QPlainTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMaximumBlockCount(2000)  # keep last 2000 lines
+        self.log_text.setStyleSheet(
+            "QPlainTextEdit {"
+            "  background: #0d1117; color: #8b949e;"
+            "  font-family: 'Consolas', 'Courier New', monospace;"
+            "  font-size: 11px; border: 1px solid #30363d;"
+            "  border-radius: 6px; padding: 8px;"
+            "}"
+        )
+        layout.addWidget(self.log_text)
+
+        # Log file path info
+        import os
+
+        log_dir = os.path.join(
+            os.environ.get("APPDATA", os.path.expanduser("~")),
+            "Anz-Creator", "logs",
+        )
+        path_label = QLabel(f"Log files: <code>{log_dir}</code>")
+        path_label.setStyleSheet("font-size: 11px; color: #546e7a;")
+        path_label.setWordWrap(True)
+        layout.addWidget(path_label)
+
+        # Install log handler to capture live logs
+        self._install_handler()
+
+    def _install_handler(self):
+        """Attach a custom logging handler that writes to the text widget."""
+        import logging
+
+        class QtLogHandler(logging.Handler):
+            def __init__(self, widget):
+                super().__init__()
+                self._widget = widget
+
+            def emit(self, record):
+                try:
+                    msg = self.format(record)
+                    # Color-code by level
+                    if record.levelno >= logging.ERROR:
+                        color = "#f85149"
+                    elif record.levelno >= logging.WARNING:
+                        color = "#d29922"
+                    elif record.levelno >= logging.INFO:
+                        color = "#8b949e"
+                    else:
+                        color = "#6e7681"
+                    self._widget.appendHtml(
+                        f"<span style='color:{color}'>{msg}</span>"
+                    )
+                except Exception:
+                    pass
+
+        handler = QtLogHandler(self.log_text)
+        handler.setLevel(logging.DEBUG)
+        formatter = logging.Formatter(
+            "[%(asctime)s] %(levelname)-8s %(funcName)s — %(message)s",
+            datefmt="%H:%M:%S",
+        )
+        handler.setFormatter(formatter)
+
+        logger = logging.getLogger("AnzCreator")
+        logger.addHandler(handler)
+
+    def _clear(self):
+        self.log_text.clear()
+
+    def _copy_all(self):
+        from PyQt6.QtWidgets import QApplication
+
+        clipboard = QApplication.clipboard()
+        if clipboard:
+            clipboard.setText(self.log_text.toPlainText())
+
+
 class MainWindow(QMainWindow):
     """Application main window — sidebar + stacked content."""
 
@@ -215,10 +330,12 @@ class MainWindow(QMainWindow):
         self.watermark_panel = WatermarkRemovalPanel()
         self.settings_panel = SettingsPanel()
         self.about_panel = AboutPanel()
+        self.debug_panel = DebugPanel()
 
         self.stack.addWidget(self.watermark_panel)   # index 0
         self.stack.addWidget(self.settings_panel)     # index 1
         self.stack.addWidget(self.about_panel)        # index 2
+        self.stack.addWidget(self.debug_panel)        # index 3
 
         main_layout.addWidget(self.stack, 1)
 
@@ -226,6 +343,7 @@ class MainWindow(QMainWindow):
         self.sidebar.btn_watermark.clicked.connect(lambda: self.stack.setCurrentIndex(0))
         self.sidebar.btn_settings.clicked.connect(lambda: self.stack.setCurrentIndex(1))
         self.sidebar.btn_about.clicked.connect(lambda: self._show_about())
+        self.sidebar.btn_debug.clicked.connect(lambda: self._show_debug())
 
         # Status bar
         self.statusBar().showMessage("Ready")
@@ -240,6 +358,12 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(2)
         for btn in self.sidebar.buttons:
             btn.setChecked(False)
+
+    def _show_debug(self):
+        self.stack.setCurrentIndex(3)
+        for btn in self.sidebar.buttons:
+            btn.setChecked(False)
+        self.sidebar.btn_debug.setChecked(True)
 
     def closeEvent(self, event):
         from core.task_queue import TaskQueue
