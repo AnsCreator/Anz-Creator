@@ -3,8 +3,8 @@ Anz-Creator — AI-powered Video Processing Toolkit
 Entry point: initializes Qt app, applies dark material theme, launches main window.
 """
 
-import sys
 import os
+import sys
 
 # Ensure project root is on path and set as working directory
 _PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -42,7 +42,7 @@ def main():
         log.warning("qt-material not installed — using default Qt style.")
         app.setStyle("Fusion")
         # Apply a basic dark palette as fallback
-        from PyQt6.QtGui import QPalette, QColor
+        from PyQt6.QtGui import QColor, QPalette
         palette = QPalette()
         palette.setColor(QPalette.ColorRole.Window, QColor(22, 27, 34))
         palette.setColor(QPalette.ColorRole.WindowText, QColor(201, 209, 217))
@@ -153,7 +153,7 @@ def _global_exception_handler(exc_type, exc_value, exc_tb):
 
     # Try to show a message box
     try:
-        from PyQt6.QtWidgets import QMessageBox, QApplication
+        from PyQt6.QtWidgets import QApplication, QMessageBox
         app = QApplication.instance()
         if app:
             msg = QMessageBox()
