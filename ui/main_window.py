@@ -4,6 +4,8 @@ Main Window — shell with sidebar navigation + content area.
 
 from __future__ import annotations
 
+import os
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QFrame,
@@ -158,7 +160,7 @@ class Sidebar(QFrame):
 
 
 class AboutPanel(QWidget):
-    """Simple about page."""
+    """About page with auto-update functionality."""
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
@@ -170,10 +172,12 @@ class AboutPanel(QWidget):
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
-        ver = QLabel("Version 1.0.0")
-        ver.setStyleSheet("font-size: 14px; color: #b0bec5;")
-        ver.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(ver)
+        from core.updater import get_current_version
+
+        self.ver_label = QLabel(f"Version: {get_current_version()}")
+        self.ver_label.setStyleSheet("font-size: 14px; color: #b0bec5;")
+        self.ver_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.ver_label)
 
         layout.addSpacing(20)
 
@@ -189,7 +193,156 @@ class AboutPanel(QWidget):
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
+        layout.addSpacing(30)
+
+        # Update section
+        self.update_status = QLabel("")
+        self.update_status.setStyleSheet("font-size: 12px; color: #8b949e;")
+        self.update_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.update_status.setWordWrap(True)
+        layout.addWidget(self.update_status)
+
+        from ui.components import ProgressPanel
+
+        self.update_progress = ProgressPanel()
+        self.update_progress.hide()
+        layout.addWidget(self.update_progress)
+
+        btn_row = QHBoxLayout()
+        btn_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.check_btn = QPushButton("🔄  Check for Updates")
+        self.check_btn.setFixedWidth(200)
+        self.check_btn.setMinimumHeight(36)
+        self.check_btn.clicked.connect(self._check_update)
+        btn_row.addWidget(self.check_btn)
+
+        self.install_btn = QPushButton("⬇  Install Update")
+        self.install_btn.setFixedWidth(200)
+        self.install_btn.setMinimumHeight(36)
+        self.install_btn.hide()
+        self.install_btn.clicked.connect(self._install_update)
+        btn_row.addWidget(self.install_btn)
+
+        layout.addLayout(btn_row)
         layout.addStretch()
+
+        self._update_info = None
+
+    def _check_update(self):
+        self.check_btn.setEnabled(False)
+        self.update_status.setText("Checking for updates…")
+
+        from core.task_queue import TaskQueue, Worker
+        from core.updater import check_for_update
+
+        def _check(progress_callback=None, cancel_flag=None):
+            return check_for_update()
+
+        worker = Worker(_check)
+        worker.signals.finished.connect(self._on_check_done)
+        worker.signals.error.connect(
+            lambda e: self._on_check_error(e)
+        )
+        TaskQueue().submit(worker)
+
+    def _on_check_done(self, result):
+        self.check_btn.setEnabled(True)
+        if result is None:
+            self.update_status.setText(
+                "<span style='color:#66bb6a'>✓ You're running the latest version.</span>"
+            )
+            self.install_btn.hide()
+        else:
+            self._update_info = result
+            size_mb = result["size"] / 1048576
+            self.update_status.setText(
+                f"<span style='color:#ffa726'>⬆ Update available: "
+                f"<b>{result['tag']}</b> ({size_mb:.0f} MB)</span>"
+            )
+            self.install_btn.show()
+
+    def _on_check_error(self, err):
+        self.check_btn.setEnabled(True)
+        self.update_status.setText(
+            f"<span style='color:#ef5350'>Update check failed: {err}</span>"
+        )
+
+    def _install_update(self):
+        if not self._update_info:
+            return
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        reply = QMessageBox.question(
+            self, "Install Update",
+            f"Download and install {self._update_info['tag']}?\n\n"
+            "The application will restart after updating.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self.install_btn.setEnabled(False)
+        self.update_progress.show()
+
+        from core.task_queue import TaskQueue, Worker
+        from core.updater import apply_update, download_update
+
+        url = self._update_info["url"]
+
+        def _download_and_apply(progress_callback=None, cancel_flag=None):
+            zip_path = download_update(
+                url,
+                progress_callback=progress_callback,
+                cancel_flag=cancel_flag,
+            )
+            if not zip_path:
+                return None
+            batch = apply_update(zip_path)
+            return batch
+
+        worker = Worker(_download_and_apply)
+        worker.signals.progress.connect(self.update_progress.update_progress)
+        worker.signals.finished.connect(self._on_update_ready)
+        worker.signals.error.connect(
+            lambda e: self._on_update_error(e)
+        )
+        TaskQueue().submit(worker)
+
+    def _on_update_ready(self, batch_path):
+        if not batch_path:
+            self.update_status.setText("Update cancelled.")
+            self.install_btn.setEnabled(True)
+            return
+
+        self.update_status.setText(
+            "<span style='color:#66bb6a'>✓ Update downloaded! Restarting…</span>"
+        )
+
+        import subprocess
+        import sys
+
+        # Launch updater script and exit
+        if os.name == "nt":
+            subprocess.Popen(
+                ["cmd", "/c", batch_path],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+        else:
+            subprocess.Popen(["bash", batch_path])
+
+        # Close the app
+        from PyQt6.QtWidgets import QApplication
+
+        QApplication.quit()
+
+    def _on_update_error(self, err):
+        self.install_btn.setEnabled(True)
+        self.update_progress.hide()
+        self.update_status.setText(
+            f"<span style='color:#ef5350'>Update failed: {err}</span>"
+        )
 
 
 class DebugPanel(QWidget):
@@ -353,6 +506,37 @@ class MainWindow(QMainWindow):
         )
 
         log.info("MainWindow initialized.")
+
+        # Check for updates in background on startup
+        self._startup_update_check()
+
+    def _startup_update_check(self):
+        """Silently check for updates after startup."""
+        from core.task_queue import TaskQueue, Worker
+        from core.updater import check_for_update
+
+        def _check(progress_callback=None, cancel_flag=None):
+            return check_for_update()
+
+        def _on_result(result):
+            if result:
+                self.statusBar().showMessage(
+                    f"Update available: {result['tag']}  —  "
+                    "Go to About to install.",
+                    15000,
+                )
+                # Pre-fill the about panel
+                self.about_panel._update_info = result
+                size_mb = result["size"] / 1048576
+                self.about_panel.update_status.setText(
+                    f"<span style='color:#ffa726'>⬆ Update available: "
+                    f"<b>{result['tag']}</b> ({size_mb:.0f} MB)</span>"
+                )
+                self.about_panel.install_btn.show()
+
+        worker = Worker(_check)
+        worker.signals.finished.connect(_on_result)
+        TaskQueue().submit(worker)
 
     def _show_about(self):
         self.stack.setCurrentIndex(2)
