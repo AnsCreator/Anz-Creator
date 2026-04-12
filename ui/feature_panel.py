@@ -308,10 +308,12 @@ class WatermarkRemovalPanel(QWidget):
             import cv2
             import numpy as np
 
+            from core.video_io import _find_ffmpeg
+
             if progress_callback:
                 progress_callback(10, "Reading video info…")
 
-            # Get video info via OpenCV (fast, just reads header)
+            # Get video info (OpenCV + ffprobe fallback)
             info = get_video_info(path)
 
             if progress_callback:
@@ -319,9 +321,10 @@ class WatermarkRemovalPanel(QWidget):
 
             # Try FFmpeg first (more robust than OpenCV for reading frames)
             frame = None
+            ffmpeg_bin = _find_ffmpeg()
             try:
                 cmd = [
-                    "ffmpeg", "-y",
+                    ffmpeg_bin, "-y",
                     "-i", path,
                     "-vframes", "1",
                     "-f", "image2pipe",
@@ -344,34 +347,67 @@ class WatermarkRemovalPanel(QWidget):
                 )
                 if proc.returncode == 0 and len(proc.stdout) > 0:
                     raw = np.frombuffer(proc.stdout, dtype=np.uint8)
-                    frame = raw.reshape((info.height, info.width, 3))
-                    log.info("Frame extracted via FFmpeg.")
+                    expected = info.width * info.height * 3
+                    if expected > 0 and len(raw) >= expected:
+                        frame = raw[:expected].reshape(
+                            (info.height, info.width, 3)
+                        )
+                        log.info("Frame extracted via FFmpeg.")
+                    else:
+                        log.warning(
+                            "FFmpeg raw size %d != expected %d",
+                            len(raw), expected,
+                        )
+                else:
+                    stderr = proc.stderr.decode("utf-8", errors="replace")[:200]
+                    log.warning("FFmpeg exited %d: %s", proc.returncode, stderr)
+            except FileNotFoundError:
+                log.warning(
+                    "FFmpeg not found. Install it: "
+                    "winget install ffmpeg  OR  choco install ffmpeg"
+                )
             except Exception as exc:
                 log.warning("FFmpeg frame extract failed: %s", exc)
 
             # Fallback to OpenCV
             if frame is None:
                 try:
+                    log.info("Trying OpenCV frame read…")
                     cap = cv2.VideoCapture(path)
                     if cap.isOpened():
                         ret, bgr = cap.read()
                         cap.release()
                         if ret and bgr is not None:
+                            # Update dimensions from actual frame
+                            h, w = bgr.shape[:2]
+                            if info.width <= 0 or info.height <= 0:
+                                info.width = w
+                                info.height = h
+                                log.info(
+                                    "Updated dimensions from frame: %dx%d",
+                                    w, h,
+                                )
                             frame = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
                             log.info("Frame extracted via OpenCV.")
+                        else:
+                            log.warning("OpenCV read() returned empty frame.")
+                    else:
+                        log.warning("OpenCV cannot open: %s", path)
                 except Exception as exc:
                     log.warning("OpenCV frame read failed: %s", exc)
 
             if frame is None:
-                # Last resort: create a placeholder frame
-                frame = np.zeros((info.height or 480, info.width or 640, 3), dtype=np.uint8)
-                # Draw text "Preview not available"
+                # Last resort: placeholder
+                pw = info.width if info.width > 0 else 640
+                ph = info.height if info.height > 0 else 480
+                frame = np.zeros((ph, pw, 3), dtype=np.uint8)
                 cv2.putText(
-                    frame, "Preview not available", (50, info.height // 2),
+                    frame, "Preview not available",
+                    (pw // 10, ph // 2),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (128, 128, 128), 2,
                 )
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                log.warning("Using placeholder frame.")
+                log.warning("Using placeholder frame for preview.")
 
             if progress_callback:
                 progress_callback(80, "Preparing preview…")
