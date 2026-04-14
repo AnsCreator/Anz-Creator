@@ -43,7 +43,7 @@ class ProgressPanel(QWidget):
         layout.addWidget(self.bar)
 
     def update_progress(self, percent: int, message: str = ""):
-        self.bar.setValue(percent)
+        self.bar.setValue(max(0, min(100, percent)))  # FIX: Clamp value
         if message:
             self.label.setText(message)
 
@@ -72,6 +72,7 @@ class VideoPreview(QLabel):
         try:
             if pixmap is not None and not pixmap.isNull():
                 self._pixmap = pixmap
+                self.setText("")  # FIX: Clear placeholder text when setting image
                 self._fit()
         except Exception:
             pass
@@ -81,6 +82,7 @@ class VideoPreview(QLabel):
             pm = QPixmap(path)
             if not pm.isNull():
                 self._pixmap = pm
+                self.setText("")
                 self._fit()
         except Exception:
             pass
@@ -128,10 +130,11 @@ class ClickableFrame(VideoPreview):
         )
 
     def set_pixmap_direct(self, pixmap: QPixmap):
-        """Override to also clear points."""
+        """Override to also clear points when new image is set."""
         try:
-            self._points.clear()
-            super().set_pixmap_direct(pixmap)
+            if pixmap is not None and not pixmap.isNull():
+                self._points.clear()
+                super().set_pixmap_direct(pixmap)
         except Exception:
             pass
 
@@ -145,15 +148,21 @@ class ClickableFrame(VideoPreview):
                 pm = self.pixmap()
                 if pm is None or pm.isNull():
                     return
+
+                # FIX: Calculate offset from centered pixmap
                 x_off = (self.width() - pm.width()) // 2
                 y_off = (self.height() - pm.height()) // 2
                 cx = event.pos().x() - x_off
                 cy = event.pos().y() - y_off
+
                 if 0 <= cx < pm.width() and 0 <= cy < pm.height():
                     ow, oh = self._original_size
                     if ow > 0 and oh > 0:
                         ox = int(cx / pm.width() * ow)
                         oy = int(cy / pm.height() * oh)
+                        # FIX: Clamp to image bounds
+                        ox = max(0, min(ow - 1, ox))
+                        oy = max(0, min(oh - 1, oy))
                         self._points.append((ox, oy))
                         self.point_added.emit(ox, oy)
                         self._draw_points()
@@ -181,12 +190,15 @@ class ClickableFrame(VideoPreview):
                 return
 
             painter = QPainter(pm)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)  # FIX: Smoother circles
             painter.setPen(Qt.PenStyle.NoPen)
             for ox, oy in self._points:
                 sx = int(ox / ow * pm.width())
                 sy = int(oy / oh * pm.height())
+                # Outer circle (teal)
                 painter.setBrush(QColor(0, 191, 165, 200))
                 painter.drawEllipse(sx - 6, sy - 6, 12, 12)
+                # Inner dot (white)
                 painter.setBrush(QColor(255, 255, 255))
                 painter.drawEllipse(sx - 3, sy - 3, 6, 6)
             painter.end()
