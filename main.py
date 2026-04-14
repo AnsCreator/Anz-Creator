@@ -197,10 +197,11 @@ if __name__ == "__main__":
     faulthandler.enable(file=_crash_file, all_threads=True)
 
     # Register atexit handler to close crash file properly
+    _cf = _crash_file  # capture local reference for closure
+
     def _close_crash_file():
-        global _crash_file
-        if _crash_file and not _crash_file.closed:
-            _crash_file.close()
+        if _cf and not _cf.closed:
+            _cf.close()
 
     atexit.register(_close_crash_file)
 
