@@ -160,7 +160,7 @@ def _auto_download_ffmpeg(app_bin: str) -> str:
                 basename = os.path.basename(member)
                 if basename in ("ffmpeg.exe", "ffprobe.exe"):
                     target = os.path.join(app_bin, basename)
-                    # FIX: Use shutil (top-level import) instead of _shutil alias
+                    # FIX: Use shutil.copyfileobj (top-level import)
                     with zf.open(member) as src, open(target, "wb") as dst:
                         shutil.copyfileobj(src, dst)
                     log.info("Extracted: %s", target)
