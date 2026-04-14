@@ -22,6 +22,7 @@ from utils.logger import log
 
 # Global reference to keep crash file open for faulthandler
 _crash_file = None
+_handling_exception = False  # Lock untuk mencegah infinite error loop
 
 
 def main() -> int:
@@ -96,18 +97,24 @@ def main() -> int:
 
 
 def _global_exception_handler(exc_type, exc_value, exc_tb):
-    if issubclass(exc_type, (SystemExit, KeyboardInterrupt)):
-        sys.__excepthook__(exc_type, exc_value, exc_tb)
+    global _handling_exception
+    # Cegah infinite loop jika QMessageBox memicu error baru
+    if _handling_exception:
         return
-
-    import traceback
-    tb_str = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
-    log.critical("Unhandled exception:\n%s", tb_str)
+    _handling_exception = True
 
     try:
+        if issubclass(exc_type, (SystemExit, KeyboardInterrupt)):
+            sys.__excepthook__(exc_type, exc_value, exc_tb)
+            return
+
+        import traceback
+        tb_str = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        log.critical("Unhandled exception:\n%s", tb_str)
+
         from PyQt6.QtWidgets import QApplication, QMessageBox
         app_inst = QApplication.instance()
-        # Hanya tampilkan dialog box jika error terjadi di Main Thread!
+        
         if app_inst is not None and QThread.currentThread() == app_inst.thread():
             msg = QMessageBox()
             msg.setIcon(QMessageBox.Icon.Critical)
@@ -117,6 +124,8 @@ def _global_exception_handler(exc_type, exc_value, exc_tb):
             msg.exec()
     except Exception:
         pass
+    finally:
+        _handling_exception = False
 
 
 if __name__ == "__main__":
