@@ -67,6 +67,7 @@ class VideoPreview(QLabel):
         )
         self.setText("No video loaded")
         self._pixmap: Optional[QPixmap] = None
+        self._rgb_ref = None  # prevent numpy GC
 
     def set_frame(self, frame: np.ndarray):
         """Display an OpenCV BGR/BGRA/grayscale frame safely."""
@@ -76,43 +77,57 @@ class VideoPreview(QLabel):
             h, w = frame.shape[:2]
             ch = frame.shape[2] if frame.ndim == 3 else 1
 
-            # Convert to RGB888 regardless of input format
             if ch == 4:
-                # BGRA → RGB
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
             elif ch == 3:
-                # BGR → RGB
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             elif ch == 1 or frame.ndim == 2:
-                # Grayscale → RGB
                 rgb = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
             else:
                 return
 
             rgb = np.ascontiguousarray(rgb)
-            self._rgb_ref = rgb  # prevent garbage collection
-            qimg = QImage(
-                rgb.data, w, h, w * 3, QImage.Format.Format_RGB888
-            )
+            self._rgb_ref = rgb
+            qimg = QImage(rgb.data, w, h, w * 3, QImage.Format.Format_RGB888)
+            # Deep copy pixmap so it has NO reference to numpy memory
             self._pixmap = QPixmap.fromImage(qimg.copy())
+            self._rgb_ref = None  # safe to release now, pixmap owns pixel data
             self._fit()
         except Exception:
-            pass  # Silently fail rather than crash the app
+            pass
+
+    def set_pixmap_direct(self, pixmap: QPixmap):
+        """Set pixmap directly (already constructed, thread-safe)."""
+        self._pixmap = pixmap
+        self._fit()
 
     def set_pixmap_file(self, path: str):
         self._pixmap = QPixmap(path)
         self._fit()
 
     def _fit(self):
-        if self._pixmap:
-            scaled = self._pixmap.scaled(
-                self.size(), Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            self.setPixmap(scaled)
+        try:
+            if self._pixmap and not self._pixmap.isNull():
+                w = self.width()
+                h = self.height()
+                if w > 0 and h > 0:
+                    from PyQt6.QtCore import QSize
+
+                    scaled = self._pixmap.scaled(
+                        QSize(w, h),
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                    if not scaled.isNull():
+                        self.setPixmap(scaled)
+        except Exception:
+            pass
 
     def resizeEvent(self, event):
-        self._fit()
+        try:
+            self._fit()
+        except Exception:
+            pass
         super().resizeEvent(event)
 
 
@@ -142,45 +157,68 @@ class ClickableFrame(VideoPreview):
             pass
 
     def mousePressEvent(self, event: QMouseEvent):
-        if self._pixmap and event.button() == Qt.MouseButton.LeftButton:
-            # Map widget coords → original image coords
-            pm = self.pixmap()
-            if pm is None:
-                return
-            # Offset from centering
-            x_off = (self.width() - pm.width()) // 2
-            y_off = (self.height() - pm.height()) // 2
-            cx = event.pos().x() - x_off
-            cy = event.pos().y() - y_off
-            if 0 <= cx < pm.width() and 0 <= cy < pm.height():
-                ox = int(cx / pm.width() * self._original_size[0])
-                oy = int(cy / pm.height() * self._original_size[1])
-                self._points.append((ox, oy))
-                self.point_added.emit(ox, oy)
-                self._draw_points()
+        try:
+            if self._pixmap and not self._pixmap.isNull() and event.button() == Qt.MouseButton.LeftButton:
+                pm = self.pixmap()
+                if pm is None or pm.isNull():
+                    return
+                x_off = (self.width() - pm.width()) // 2
+                y_off = (self.height() - pm.height()) // 2
+                cx = event.pos().x() - x_off
+                cy = event.pos().y() - y_off
+                if 0 <= cx < pm.width() and 0 <= cy < pm.height():
+                    ow = self._original_size[0]
+                    oh = self._original_size[1]
+                    if ow > 0 and oh > 0:
+                        ox = int(cx / pm.width() * ow)
+                        oy = int(cy / pm.height() * oh)
+                        self._points.append((ox, oy))
+                        self.point_added.emit(ox, oy)
+                        self._draw_points()
+        except Exception:
+            pass
 
     def _draw_points(self):
-        if not self._pixmap:
-            return
-        pm = self._pixmap.scaled(
-            self.size(), Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        painter = QPainter(pm)
-        painter.setPen(Qt.PenStyle.NoPen)
-        for ox, oy in self._points:
-            sx = int(ox / self._original_size[0] * pm.width())
-            sy = int(oy / self._original_size[1] * pm.height())
-            painter.setBrush(QColor(0, 191, 165, 200))
-            painter.drawEllipse(sx - 6, sy - 6, 12, 12)
-            painter.setBrush(QColor(255, 255, 255))
-            painter.drawEllipse(sx - 3, sy - 3, 6, 6)
-        painter.end()
-        self.setPixmap(pm)
+        try:
+            if not self._pixmap or self._pixmap.isNull():
+                return
+            if self._original_size[0] <= 0 or self._original_size[1] <= 0:
+                return
+            w = self.width()
+            h = self.height()
+            if w <= 0 or h <= 0:
+                return
+
+            from PyQt6.QtCore import QSize
+
+            pm = self._pixmap.scaled(
+                QSize(w, h),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            if pm.isNull():
+                return
+
+            painter = QPainter(pm)
+            painter.setPen(Qt.PenStyle.NoPen)
+            for ox, oy in self._points:
+                sx = int(ox / self._original_size[0] * pm.width())
+                sy = int(oy / self._original_size[1] * pm.height())
+                painter.setBrush(QColor(0, 191, 165, 200))
+                painter.drawEllipse(sx - 6, sy - 6, 12, 12)
+                painter.setBrush(QColor(255, 255, 255))
+                painter.drawEllipse(sx - 3, sy - 3, 6, 6)
+            painter.end()
+            self.setPixmap(pm)
+        except Exception:
+            pass
 
     def clear_points(self):
         self._points.clear()
-        self._fit()
+        try:
+            self._fit()
+        except Exception:
+            pass
 
     @property
     def points(self) -> list[tuple[int, int]]:
