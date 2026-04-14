@@ -15,6 +15,9 @@ from PyQt6.QtWidgets import QApplication
 
 from utils.logger import log
 
+# Global reference to keep crash file open for faulthandler
+_crash_file = None
+
 
 def main():
     log.info("=" * 50)
@@ -142,7 +145,14 @@ def main():
     window.show()
 
     log.info("Application ready.")
-    sys.exit(app.exec())
+    ret = app.exec()
+
+    # FIX: Clean up crash file on exit
+    global _crash_file
+    if _crash_file and not _crash_file.closed:
+        _crash_file.close()
+
+    sys.exit(ret)
 
 
 def _global_exception_handler(exc_type, exc_value, exc_tb):
@@ -154,8 +164,8 @@ def _global_exception_handler(exc_type, exc_value, exc_tb):
     # Try to show a message box
     try:
         from PyQt6.QtWidgets import QApplication, QMessageBox
-        app = QApplication.instance()
-        if app:
+        app_inst = QApplication.instance()
+        if app_inst:
             msg = QMessageBox()
             msg.setIcon(QMessageBox.Icon.Critical)
             msg.setWindowTitle("Anz-Creator — Error")
@@ -172,7 +182,9 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
 
     # Enable faulthandler to catch C-level segfaults
+    import atexit
     import faulthandler
+
     _crash_log = os.path.join(
         os.environ.get("APPDATA", os.path.expanduser("~")),
         "Anz-Creator", "logs", "crash_dump.log",
@@ -180,7 +192,16 @@ if __name__ == "__main__":
     os.makedirs(os.path.dirname(_crash_log), exist_ok=True)
     _crash_file = open(_crash_log, "a")
     _crash_file.write("\n\n=== Session started ===\n")
+    _crash_file.flush()
     faulthandler.enable(file=_crash_file, all_threads=True)
+
+    # FIX: Register atexit handler to close file properly
+    def _close_crash_file():
+        global _crash_file
+        if _crash_file and not _crash_file.closed:
+            _crash_file.close()
+
+    atexit.register(_close_crash_file)
 
     sys.excepthook = _global_exception_handler
     main()
