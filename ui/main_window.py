@@ -3,13 +3,20 @@ Main Window — shell with sidebar navigation + content area.
 """
 
 from __future__ import annotations
+
 import logging
 import os
 
-from PyQt6.QtCore import Qt, QObject, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QMainWindow,
-    QPushButton, QStackedWidget, QVBoxLayout, QWidget,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ui.feature_panel import SettingsPanel, WatermarkRemovalPanel
