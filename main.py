@@ -146,8 +146,22 @@ def main() -> int:
 
     log.info("Application ready.")
 
-    # Run event loop and return exit code (do NOT call sys.exit here)
-    return app.exec()
+    # Run event loop
+    exit_code = app.exec()
+
+    # FIX: Explicitly destroy the window and process remaining events
+    # BEFORE Python's garbage collector runs. Without this, GC destroys
+    # Qt C++ objects in an unpredictable order after app.exec() returns,
+    # causing recursive widget destruction → stack overflow on Windows.
+    window.debug_panel.remove_handler()
+    window.close()
+    del window
+
+    # Process any pending deletion events so Qt releases all C++ objects
+    # while QApplication is still alive
+    app.processEvents()
+
+    return exit_code
 
 
 def _global_exception_handler(exc_type, exc_value, exc_tb):
