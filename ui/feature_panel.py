@@ -479,17 +479,23 @@ class WatermarkRemovalPanel(QWidget):
 
                 rgb = result["rgb"]
                 w, h = result["w"], result["h"]
-                self._frame_rgb_ref = rgb  # prevent GC
 
+                # Create QImage → QPixmap, then release numpy ref
                 qimg = QImage(rgb.data, w, h, w * 3, QImage.Format.Format_RGB888)
                 pixmap = QPixmap.fromImage(qimg.copy())
+                # After .copy(), pixmap owns its own pixel data — safe to drop rgb
+                del qimg
 
-                self.auto_preview._pixmap = pixmap
-                self.auto_preview._fit()
-                self.click_frame._pixmap = pixmap
+                if pixmap.isNull():
+                    log.warning("Created pixmap is null, skipping display.")
+                    self.progress.reset()
+                    return
+
+                # Each widget gets its OWN copy of the pixmap (no sharing)
+                self.auto_preview.set_pixmap_direct(pixmap.copy())
                 self.click_frame._original_size = (w, h)
                 self.click_frame._points.clear()
-                self.click_frame._fit()
+                self.click_frame.set_pixmap_direct(pixmap.copy())
 
                 self.auto_detect_btn.setEnabled(True)
                 self.manual_run_btn.setEnabled(True)
