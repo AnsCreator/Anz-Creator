@@ -43,7 +43,7 @@ class ProgressPanel(QWidget):
         layout.addWidget(self.bar)
 
     def update_progress(self, percent: int, message: str = ""):
-        self.bar.setValue(max(0, min(100, percent)))  # FIX: Clamp value
+        self.bar.setValue(max(0, min(100, percent)))
         if message:
             self.label.setText(message)
 
@@ -66,14 +66,16 @@ class VideoPreview(QLabel):
         self.setText("No video loaded")
         self._pixmap: Optional[QPixmap] = None
         self._fitting = False  # guard against infinite recursion
+        self._resize_timer = None  # debounce resize events
 
     def set_pixmap_direct(self, pixmap: QPixmap):
         """Set pixmap directly. This is the ONLY way to set the preview."""
         try:
             if pixmap is not None and not pixmap.isNull():
-                self._pixmap = pixmap
-                self.setText("")  # FIX: Clear placeholder text when setting image
-                self._fit()
+                self._pixmap = QPixmap(pixmap)  # FIX: Make a copy to avoid shared state
+                self.setText("")
+                # Schedule fit instead of calling directly
+                self._schedule_fit()
         except Exception:
             pass
 
@@ -81,38 +83,63 @@ class VideoPreview(QLabel):
         try:
             pm = QPixmap(path)
             if not pm.isNull():
-                self._pixmap = pm
+                self._pixmap = QPixmap(pm)
                 self.setText("")
-                self._fit()
+                self._schedule_fit()
         except Exception:
             pass
 
-    def _fit(self):
+    def _schedule_fit(self):
+        """Debounce fit calls to prevent recursion."""
         if self._fitting:
-            return  # prevent setPixmap → resizeEvent → _fit → setPixmap loop
+            return
+        from PyQt6.QtCore import QTimer
+        if self._resize_timer is None:
+            self._resize_timer = QTimer(self)
+            self._resize_timer.setSingleShot(True)
+            self._resize_timer.timeout.connect(self._fit)
+        self._resize_timer.start(10)  # 10ms debounce
+
+    def _fit(self):
+        """Scale pixmap to fit widget while preserving aspect ratio."""
+        if self._fitting:
+            return
         self._fitting = True
         try:
             if self._pixmap is None or self._pixmap.isNull():
+                self._fitting = False
                 return
+
             w = self.width()
             h = self.height()
             if w <= 0 or h <= 0:
+                self._fitting = False
                 return
+
+            # Use original pixmap size for scaling
             scaled = self._pixmap.scaled(
                 QSize(w, h),
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
             if not scaled.isNull():
-                self.setPixmap(scaled)
+                super().setPixmap(scaled)  # FIX: Call parent directly to avoid recursion
         except Exception:
             pass
         finally:
             self._fitting = False
 
     def resizeEvent(self, event):
-        self._fit()
+        """Override resize to debounce fit calls."""
+        self._schedule_fit()
         super().resizeEvent(event)
+
+    def setPixmap(self, pixmap):
+        """Override to prevent external setPixmap calls from causing issues."""
+        # Only allow internal calls via _fit()
+        if self._fitting:
+            super().setPixmap(pixmap)
+        # Silently ignore external calls
 
 
 # ── Clickable Frame for SAM2 manual mode ─────────────────
@@ -128,6 +155,7 @@ class ClickableFrame(VideoPreview):
         self.setStyleSheet(
             "background: #1a1a2e; border: 2px solid #00bfa5; border-radius: 8px;"
         )
+        self._drawing = False  # guard against recursive drawing
 
     def set_pixmap_direct(self, pixmap: QPixmap):
         """Override to also clear points when new image is set."""
@@ -138,80 +166,108 @@ class ClickableFrame(VideoPreview):
         except Exception:
             pass
 
+    def set_original_size(self, width: int, height: int):
+        """Set original image dimensions for coordinate mapping."""
+        self._original_size = (width, height)
+
     def mousePressEvent(self, event: QMouseEvent):
         try:
-            if (
-                self._pixmap
-                and not self._pixmap.isNull()
-                and event.button() == Qt.MouseButton.LeftButton
-            ):
-                pm = self.pixmap()
-                if pm is None or pm.isNull():
+            if (self._pixmap and not self._pixmap.isNull() and 
+                event.button() == Qt.MouseButton.LeftButton):
+                
+                # Get current displayed pixmap
+                current_pm = self.pixmap()
+                if current_pm is None or current_pm.isNull():
                     return
 
-                # FIX: Calculate offset from centered pixmap
-                x_off = (self.width() - pm.width()) // 2
-                y_off = (self.height() - pm.height()) // 2
+                # Calculate offset from centered pixmap
+                x_off = (self.width() - current_pm.width()) // 2
+                y_off = (self.height() - current_pm.height()) // 2
                 cx = event.pos().x() - x_off
                 cy = event.pos().y() - y_off
 
-                if 0 <= cx < pm.width() and 0 <= cy < pm.height():
+                if 0 <= cx < current_pm.width() and 0 <= cy < current_pm.height():
                     ow, oh = self._original_size
                     if ow > 0 and oh > 0:
-                        ox = int(cx / pm.width() * ow)
-                        oy = int(cy / pm.height() * oh)
-                        # FIX: Clamp to image bounds
+                        ox = int(cx / current_pm.width() * ow)
+                        oy = int(cy / current_pm.height() * oh)
                         ox = max(0, min(ow - 1, ox))
                         oy = max(0, min(oh - 1, oy))
                         self._points.append((ox, oy))
                         self.point_added.emit(ox, oy)
-                        self._draw_points()
+                        self._redraw_points()
         except Exception:
             pass
 
-    def _draw_points(self):
+    def _redraw_points(self):
+        """Redraw points on the current image."""
+        if self._drawing:
+            return
+        self._drawing = True
         try:
             if not self._pixmap or self._pixmap.isNull():
+                self._drawing = False
                 return
+                
             ow, oh = self._original_size
             if ow <= 0 or oh <= 0:
+                self._drawing = False
                 return
+
+            # Create a fresh copy of the original pixmap
+            base_pm = QPixmap(self._pixmap)
+            if base_pm.isNull():
+                self._drawing = False
+                return
+
             w = self.width()
             h = self.height()
             if w <= 0 or h <= 0:
+                self._drawing = False
                 return
 
-            pm = self._pixmap.scaled(
+            # Scale to current display size
+            scaled_pm = base_pm.scaled(
                 QSize(w, h),
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
-            if pm.isNull():
+            if scaled_pm.isNull():
+                self._drawing = False
                 return
 
-            painter = QPainter(pm)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)  # FIX: Smoother circles
-            painter.setPen(Qt.PenStyle.NoPen)
+            # Draw points on the scaled pixmap
+            painter = QPainter(scaled_pm)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            
             for ox, oy in self._points:
-                sx = int(ox / ow * pm.width())
-                sy = int(oy / oh * pm.height())
+                sx = int(ox / ow * scaled_pm.width())
+                sy = int(oy / oh * scaled_pm.height())
+                
                 # Outer circle (teal)
                 painter.setBrush(QColor(0, 191, 165, 200))
+                painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawEllipse(sx - 6, sy - 6, 12, 12)
+                
                 # Inner dot (white)
                 painter.setBrush(QColor(255, 255, 255))
                 painter.drawEllipse(sx - 3, sy - 3, 6, 6)
+            
             painter.end()
-            self.setPixmap(pm)
+            
+            # Update display without triggering recursion
+            self._fitting = True
+            super().setPixmap(scaled_pm)
+            self._fitting = False
+            
         except Exception:
             pass
+        finally:
+            self._drawing = False
 
     def clear_points(self):
         self._points.clear()
-        try:
-            self._fit()
-        except Exception:
-            pass
+        self._schedule_fit()
 
     @property
     def points(self) -> list[tuple[int, int]]:
