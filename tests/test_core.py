@@ -15,6 +15,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 class TestSettings:
     """Test core.settings module."""
 
+    def setup_method(self):
+        """Reset singleton before each test."""
+        from core.settings import Settings
+        Settings.reset_instance()
+
     def test_default_values(self):
         from core.settings import Settings
         s = Settings()
@@ -33,6 +38,13 @@ class TestSettings:
         s = Settings()
         s.set("test.key", "hello")
         assert s.get("test.key") == "hello"
+
+    def test_deep_merge_preserves_defaults(self):
+        from core.settings import Settings
+        s = Settings()
+        # Default values should be present even if settings file is empty
+        assert s.get("ui.theme") == "dark_teal.xml"
+        assert s.get("video.default_quality") == "1080p"
 
 
 class TestConfig:
@@ -123,6 +135,13 @@ class TestModelManager:
         assert url is not None
         assert url.startswith("https://")
 
+    def test_nonexistent_family(self):
+        from core.model_manager import ModelManager
+        mm = ModelManager()
+        assert mm.list_variants("nonexistent") == []
+        assert mm.default_variant("nonexistent") == ""
+        assert mm.get_url("nonexistent", "x") is None
+
 
 class TestFFmpegWrapper:
     """Test utils.ffmpeg_wrapper module."""
@@ -149,6 +168,12 @@ class TestDownloader:
         assert meta.title == ""
         assert meta.duration == 0
         assert meta.available_qualities == []
+
+    def test_normalize_url(self):
+        from core.downloader import _normalize_url
+        assert _normalize_url("youtube.com/watch?v=x") == "https://youtube.com/watch?v=x"
+        assert _normalize_url("https://example.com") == "https://example.com"
+        assert _normalize_url("  ") == ""
 
 
 class TestTaskQueue:
@@ -219,3 +244,19 @@ class TestInpainterPresets:
         assert std["neighbor_length"] == 10
         assert std["ref_length"] == 20
         assert std["resize"] == 1.0
+
+
+class TestUpdater:
+    """Test core.updater module."""
+
+    def test_parse_version(self):
+        from core.updater import _parse_version
+        assert _parse_version("v1.0.0.1") == (1, 0, 0, 1)
+        assert _parse_version("v2.3.4.5") == (2, 3, 4, 5)
+        assert _parse_version("v1.0") == (1, 0, 0, 0)
+        assert _parse_version("") == (0, 0, 0, 0)
+
+    def test_get_current_version(self):
+        from core.updater import get_current_version
+        ver = get_current_version()
+        assert ver.startswith("v")
