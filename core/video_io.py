@@ -88,55 +88,98 @@ def _find_ffmpeg() -> str:
 
 def _auto_download_ffmpeg(app_bin: str) -> str:
     """
-    Download FFmpeg essentials for Windows (~90MB zip).
-    Extracts ffmpeg.exe + ffprobe.exe to app_bin folder.
+    Download FFmpeg for Windows from GitHub (BtbN) or gyan.dev fallback.
+    Downloads to disk, extracts ffmpeg.exe + ffprobe.exe to app_bin.
     Returns path to ffmpeg.exe.
     """
-    import io
-    import shutil as _shutil
-    import zipfile
-
     import requests
 
-    url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+    # BtbN builds are smaller and faster than gyan.dev
+    SOURCES = [
+        (
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/"
+            "latest/ffmpeg-master-latest-win64-gpl.zip",
+            "GitHub BtbN",
+        ),
+        (
+            "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
+            "Gyan.dev",
+        ),
+    ]
+
     os.makedirs(app_bin, exist_ok=True)
     ffmpeg_dest = os.path.join(app_bin, "ffmpeg.exe")
 
     if os.path.isfile(ffmpeg_dest):
         return ffmpeg_dest
 
-    log.info("FFmpeg not found — downloading (~90MB)…")
+    # Download to disk (not memory) to avoid OOM crash
+    zip_path = os.path.join(app_bin, "ffmpeg_download.zip")
+
+    for url, source_name in SOURCES:
+        log.info("Downloading FFmpeg from %s…", source_name)
+        try:
+            resp = requests.get(
+                url, stream=True, timeout=(15, 30), allow_redirects=True,
+                headers={"User-Agent": "Anz-Creator/1.0"},
+            )
+            resp.raise_for_status()
+
+            total = int(resp.headers.get("content-length", 0))
+            downloaded = 0
+            last_pct = -1
+
+            with open(zip_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=256 * 1024):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total > 0:
+                        pct = downloaded * 100 // total
+                        if pct >= last_pct + 10:
+                            last_pct = pct
+                            log.info(
+                                "FFmpeg download: %d%% (%dMB/%dMB)",
+                                pct, downloaded // 1048576, total // 1048576,
+                            )
+
+            log.info("Download complete. Extracting…")
+            break  # success
+
+        except Exception as exc:
+            log.warning("FFmpeg download from %s failed: %s", source_name, exc)
+            if os.path.exists(zip_path):
+                os.remove(zip_path)
+            continue
+    else:
+        log.error("All FFmpeg download sources failed.")
+        return "ffmpeg"
+
+    # Extract only the binaries we need
     try:
-        resp = requests.get(url, stream=True, timeout=180, allow_redirects=True)
-        resp.raise_for_status()
+        import zipfile
 
-        data = io.BytesIO()
-        total = int(resp.headers.get("content-length", 0))
-        downloaded = 0
-        for chunk in resp.iter_content(chunk_size=512 * 1024):
-            data.write(chunk)
-            downloaded += len(chunk)
-            if total > 0 and downloaded % (5 * 1024 * 1024) < 512 * 1024:
-                log.info("Downloading FFmpeg… %d%%", downloaded * 100 // total)
-
-        data.seek(0)
-        log.info("Extracting ffmpeg.exe and ffprobe.exe…")
-
-        with zipfile.ZipFile(data) as zf:
+        with zipfile.ZipFile(zip_path) as zf:
             for member in zf.namelist():
                 basename = os.path.basename(member)
-                if basename in ("ffmpeg.exe", "ffprobe.exe", "ffplay.exe"):
+                if basename in ("ffmpeg.exe", "ffprobe.exe"):
                     target = os.path.join(app_bin, basename)
                     with zf.open(member) as src, open(target, "wb") as dst:
+                        import shutil as _shutil
+
                         _shutil.copyfileobj(src, dst)
                     log.info("Extracted: %s", target)
+
+        # Clean up zip
+        os.remove(zip_path)
 
         if os.path.isfile(ffmpeg_dest):
             log.info("FFmpeg ready: %s", ffmpeg_dest)
             return ffmpeg_dest
 
     except Exception as exc:
-        log.error("FFmpeg download failed: %s", exc)
+        log.error("FFmpeg extraction failed: %s", exc)
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
 
     return "ffmpeg"
 
