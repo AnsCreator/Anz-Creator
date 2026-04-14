@@ -88,7 +88,9 @@ def main() -> int:
     log.info("Application ready.")
     exit_code = app.exec()
 
-    window.debug_panel.remove_handler()
+    # Cleanup
+    if hasattr(window, 'debug_panel') and hasattr(window.debug_panel, 'remove_handler'):
+        window.debug_panel.remove_handler()
     window.close()
     del window
     app.processEvents()
@@ -140,7 +142,7 @@ if __name__ == "__main__":
         "Anz-Creator", "logs", "crash_dump.log",
     )
     os.makedirs(os.path.dirname(_crash_log), exist_ok=True)
-    _crash_file = open(_crash_log, "a")
+    _crash_file = open(_crash_log, "a", encoding="utf-8")
     _crash_file.write("\n\n=== Session started ===\n")
     _crash_file.flush()
     faulthandler.enable(file=_crash_file, all_threads=True)
