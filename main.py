@@ -19,7 +19,7 @@ from utils.logger import log
 _crash_file = None
 
 
-def main():
+def main() -> int:
     log.info("=" * 50)
     log.info("Anz-Creator starting…")
     log.info("=" * 50)
@@ -145,27 +145,28 @@ def main():
     window.show()
 
     log.info("Application ready.")
-    ret = app.exec()
 
-    # FIX: Clean up crash file on exit
-    global _crash_file
-    if _crash_file and not _crash_file.closed:
-        _crash_file.close()
-
-    sys.exit(ret)
+    # Run event loop and return exit code (do NOT call sys.exit here)
+    return app.exec()
 
 
 def _global_exception_handler(exc_type, exc_value, exc_tb):
     """Catch unhandled exceptions, log them, and show a dialog."""
+    # FIX: Never intercept SystemExit or KeyboardInterrupt —
+    # intercepting SystemExit was causing infinite recursion → stack overflow
+    if issubclass(exc_type, (SystemExit, KeyboardInterrupt)):
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+        return
+
     import traceback
     tb_str = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
     log.critical("Unhandled exception:\n%s", tb_str)
 
-    # Try to show a message box
+    # Try to show a message box (only if QApplication is still alive)
     try:
         from PyQt6.QtWidgets import QApplication, QMessageBox
         app_inst = QApplication.instance()
-        if app_inst:
+        if app_inst is not None:
             msg = QMessageBox()
             msg.setIcon(QMessageBox.Icon.Critical)
             msg.setWindowTitle("Anz-Creator — Error")
@@ -195,7 +196,7 @@ if __name__ == "__main__":
     _crash_file.flush()
     faulthandler.enable(file=_crash_file, all_threads=True)
 
-    # FIX: Register atexit handler to close file properly
+    # Register atexit handler to close crash file properly
     def _close_crash_file():
         global _crash_file
         if _crash_file and not _crash_file.closed:
@@ -203,5 +204,9 @@ if __name__ == "__main__":
 
     atexit.register(_close_crash_file)
 
+    # Install custom exception hook (AFTER all setup)
     sys.excepthook = _global_exception_handler
-    main()
+
+    # Run app and exit cleanly
+    exit_code = main()
+    sys.exit(exit_code)
