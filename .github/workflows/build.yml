@@ -88,17 +88,43 @@ jobs:
       - name: Build with PyInstaller
         run: pyinstaller anz_creator.spec
 
-      - name: Copy version file to dist
-        run: Copy-Item version.txt dist/Anz-Creator/
+      - name: Verify build output
+        run: |
+          echo "Checking dist folder structure:"
+          Get-ChildItem -Path dist -Recurse | Select-Object FullName
 
-      - name: Zip output
-        run: Compress-Archive -Path dist/Anz-Creator/* -DestinationPath dist/Anz-Creator-Windows.zip
+      - name: Copy version file to dist (FIXED)
+        run: |
+          # PyInstaller dengan spec file menghasilkan folder dist/Anz-Creator/
+          # atau single exe di dist/ tergantung konfigurasi
+          if (Test-Path "dist\Anz-Creator") {
+            Copy-Item version.txt "dist\Anz-Creator\"
+            Write-Host "Copied version.txt to dist\Anz-Creator\"
+          } elseif (Test-Path "dist") {
+            Copy-Item version.txt "dist\"
+            Write-Host "Copied version.txt to dist\"
+          } else {
+            Write-Error "dist folder not found!"
+            exit 1
+          }
+
+      - name: Create output directory for zip
+        run: |
+          New-Item -ItemType Directory -Force -Path release
+
+      - name: Zip output (FIXED)
+        run: |
+          if (Test-Path "dist\Anz-Creator") {
+            Compress-Archive -Path "dist\Anz-Creator\*" -DestinationPath "release\Anz-Creator-Windows.zip"
+          } else {
+            Compress-Archive -Path "dist\*.exe", "dist\version.txt" -DestinationPath "release\Anz-Creator-Windows.zip"
+          }
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v6
         with:
           name: Anz-Creator-Windows
-          path: dist/Anz-Creator-Windows.zip
+          path: release/Anz-Creator-Windows.zip
           retention-days: 30
 
   # Create GitHub Release
