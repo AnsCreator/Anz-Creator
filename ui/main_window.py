@@ -286,19 +286,28 @@ class LogEmitter(QObject):
 
 class _QtLogHandler(logging.Handler):
     """Logging handler that writes to a QPlainTextEdit widget in a Thread-Safe way."""
+
     def __init__(self, widget):
         super().__init__()
         self._widget = widget
         self._closed = False
+        self._is_emitting = False  # Mencegah Qt memicu perulangan re-render tak berujung
         self.emitter = LogEmitter()
-        self.emitter.log_signal.connect(self._widget.appendHtml)
+        
+        # Penambahan Qt.ConnectionType.QueuedConnection memastikan 100% aman
+        self.emitter.log_signal.connect(
+            self._widget.appendHtml, Qt.ConnectionType.QueuedConnection
+        )
 
     def close_handler(self):
         self._closed = True
 
     def emit(self, record):
-        if self._closed:
+        # Abaikan sinyal jika handler sudah ditutup ATAU sedang dalam proses menggambar log.
+        if self._closed or self._is_emitting:
             return
+
+        self._is_emitting = True
         try:
             msg = self.format(record)
             msg = msg.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -311,10 +320,11 @@ class _QtLogHandler(logging.Handler):
             else:
                 color = "#6e7681"
 
-            # Emit signal alih-alih merender ke GUI secara langsung
             self.emitter.log_signal.emit(f"<span style='color:{color}'>{msg}</span>")
         except Exception:
             pass
+        finally:
+            self._is_emitting = False
 
 
 class DebugPanel(QWidget):
