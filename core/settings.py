@@ -5,7 +5,9 @@ Persistent user settings backed by a YAML file in %APPDATA%.
 import os
 from pathlib import Path
 from typing import Any
+
 import yaml
+
 from utils.logger import log
 
 _DEFAULT = {
