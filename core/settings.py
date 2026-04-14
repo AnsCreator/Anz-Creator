@@ -5,9 +5,7 @@ Persistent user settings backed by a YAML file in %APPDATA%.
 import os
 from pathlib import Path
 from typing import Any
-
 import yaml
-
 from utils.logger import log
 
 _DEFAULT = {
@@ -38,18 +36,16 @@ _SETTINGS_FILE = os.path.join(_SETTINGS_DIR, "settings.yaml")
 
 class Settings:
     """Singleton-style settings store."""
-
     _instance = None
 
     def __new__(cls):
         if cls._instance is None:
             inst = super().__new__(cls)
-            inst._data = {}  # FIX: Initialize _data BEFORE _load
+            inst._data = {}
             inst._load()
             cls._instance = inst
         return cls._instance
 
-    # ── I/O ──────────────────────────────────────────────
     def _load(self):
         Path(_SETTINGS_DIR).mkdir(parents=True, exist_ok=True)
         if os.path.isfile(_SETTINGS_FILE):
@@ -61,7 +57,6 @@ class Settings:
             except Exception as exc:
                 log.warning("Failed to read settings, using defaults: %s", exc)
                 self._data = {}
-        # Merge defaults for missing keys
         self._data = _deep_merge(_DEFAULT, self._data)
 
     def save(self):
@@ -73,9 +68,7 @@ class Settings:
         except Exception as exc:
             log.error("Failed to save settings: %s", exc)
 
-    # ── Access ───────────────────────────────────────────
     def get(self, dotpath: str, default: Any = None) -> Any:
-        """Get nested value via dot-path, e.g. 'models.yolov8'."""
         keys = dotpath.split(".")
         node = self._data
         for k in keys:
@@ -84,6 +77,14 @@ class Settings:
             else:
                 return default
         return node
+
+    # PERBAIKAN: Fungsi khusus path untuk membaca %APPDATA%
+    def get_path(self, dotpath: str, default: Any = None) -> str:
+        """Mengembalikan nilai konfigurasi dan mengekstrak env vars (e.g. %APPDATA%)."""
+        val = self.get(dotpath, default)
+        if isinstance(val, str):
+            return os.path.expandvars(os.path.expanduser(val))
+        return val
 
     def set(self, dotpath: str, value: Any):
         keys = dotpath.split(".")
@@ -99,9 +100,7 @@ class Settings:
 
     @classmethod
     def reset_instance(cls):
-        """Reset singleton (useful for testing)."""
         cls._instance = None
-
 
 def _deep_merge(base: dict, override: dict) -> dict:
     merged = base.copy()
