@@ -15,8 +15,9 @@ else:
 sys.path.insert(0, _PROJECT_ROOT)
 os.chdir(_PROJECT_ROOT)
 
-from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QThread
+from PyQt6.QtWidgets import QApplication
+
 from utils.logger import log
 
 # Global reference to keep crash file open for faulthandler
