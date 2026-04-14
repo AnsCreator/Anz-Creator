@@ -6,32 +6,33 @@ Entry point: initializes Qt app, applies dark material theme, launches main wind
 import os
 import sys
 
-# Ensure project root is on path and set as working directory
-_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+# PERBAIKAN: Dukungan absolut untuk PyInstaller (saat jadi .exe)
+if getattr(sys, 'frozen', False):
+    _PROJECT_ROOT = sys._MEIPASS
+else:
+    _PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
 sys.path.insert(0, _PROJECT_ROOT)
 os.chdir(_PROJECT_ROOT)
 
 from PyQt6.QtWidgets import QApplication
-
+from PyQt6.QtCore import QThread
 from utils.logger import log
 
 # Global reference to keep crash file open for faulthandler
 _crash_file = None
-
 
 def main() -> int:
     log.info("=" * 50)
     log.info("Anz-Creator starting…")
     log.info("=" * 50)
 
-    # High-DPI support
     os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
 
     app = QApplication(sys.argv)
     app.setApplicationName("Anz-Creator")
     app.setOrganizationName("AnzCreator")
 
-    # Apply qt-material dark theme
     try:
         from qt_material import apply_stylesheet
         extra = {
@@ -44,7 +45,6 @@ def main() -> int:
     except ImportError:
         log.warning("qt-material not installed — using default Qt style.")
         app.setStyle("Fusion")
-        # Apply a basic dark palette as fallback
         from PyQt6.QtGui import QColor, QPalette
         palette = QPalette()
         palette.setColor(QPalette.ColorRole.Window, QColor(22, 27, 34))
@@ -58,116 +58,41 @@ def main() -> int:
         palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
         app.setPalette(palette)
 
-    # Custom global stylesheet overrides
     app.setStyleSheet(app.styleSheet() + """
-        QMainWindow {
-            background: #161b22;
-        }
-        QToolTip {
-            background: #1e2a3a;
-            color: #e0e0e0;
-            border: 1px solid #30363d;
-            padding: 4px 8px;
-            font-size: 12px;
-        }
-        QScrollBar:vertical {
-            width: 8px;
-            background: transparent;
-        }
-        QScrollBar::handle:vertical {
-            background: #30363d;
-            border-radius: 4px;
-            min-height: 30px;
-        }
-        QScrollBar::handle:vertical:hover {
-            background: #484f58;
-        }
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-            height: 0;
-        }
-        QTabWidget::pane {
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            background: #0d1117;
-        }
-        QTabBar::tab {
-            padding: 8px 16px;
-            border-radius: 6px 6px 0 0;
-            font-size: 12px;
-        }
-        QTabBar::tab:selected {
-            background: #0d1117;
-            color: #80cbc4;
-        }
-        QTabBar::tab:!selected {
-            background: #161b22;
-            color: #8b949e;
-        }
-        QGroupBox {
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            margin-top: 12px;
-            padding-top: 20px;
-            font-size: 13px;
-            font-weight: bold;
-            color: #b0bec5;
-        }
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            left: 12px;
-            padding: 0 6px;
-        }
-        QComboBox {
-            min-height: 32px;
-            padding: 4px 8px;
-        }
-        QLineEdit {
-            padding: 6px 10px;
-            border-radius: 6px;
-        }
-        QPushButton {
-            min-height: 32px;
-            padding: 4px 16px;
-            border-radius: 6px;
-        }
-        QProgressBar {
-            border-radius: 4px;
-            text-align: center;
-        }
-        QProgressBar::chunk {
-            border-radius: 4px;
-        }
+        QMainWindow { background: #161b22; }
+        QToolTip { background: #1e2a3a; color: #e0e0e0; border: 1px solid #30363d; padding: 4px 8px; font-size: 12px; }
+        QScrollBar:vertical { width: 8px; background: transparent; }
+        QScrollBar::handle:vertical { background: #30363d; border-radius: 4px; min-height: 30px; }
+        QScrollBar::handle:vertical:hover { background: #484f58; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        QTabWidget::pane { border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
+        QTabBar::tab { padding: 8px 16px; border-radius: 6px 6px 0 0; font-size: 12px; }
+        QTabBar::tab:selected { background: #0d1117; color: #80cbc4; }
+        QTabBar::tab:!selected { background: #161b22; color: #8b949e; }
+        QGroupBox { border: 1px solid #30363d; border-radius: 8px; margin-top: 12px; padding-top: 20px; font-size: 13px; font-weight: bold; color: #b0bec5; }
+        QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; }
+        QComboBox { min-height: 32px; padding: 4px 8px; }
+        QLineEdit { padding: 6px 10px; border-radius: 6px; }
+        QPushButton { min-height: 32px; padding: 4px 16px; border-radius: 6px; }
+        QProgressBar { border-radius: 4px; text-align: center; }
+        QProgressBar::chunk { border-radius: 4px; }
     """)
 
-    # Launch main window
     from ui.main_window import MainWindow
     window = MainWindow()
     window.show()
 
     log.info("Application ready.")
-
-    # Run event loop
     exit_code = app.exec()
 
-    # FIX: Explicitly destroy the window and process remaining events
-    # BEFORE Python's garbage collector runs. Without this, GC destroys
-    # Qt C++ objects in an unpredictable order after app.exec() returns,
-    # causing recursive widget destruction → stack overflow on Windows.
     window.debug_panel.remove_handler()
     window.close()
     del window
-
-    # Process any pending deletion events so Qt releases all C++ objects
-    # while QApplication is still alive
     app.processEvents()
 
     return exit_code
 
-
 def _global_exception_handler(exc_type, exc_value, exc_tb):
-    """Catch unhandled exceptions, log them, and show a dialog."""
-    # FIX: Never intercept SystemExit or KeyboardInterrupt —
-    # intercepting SystemExit was causing infinite recursion → stack overflow
     if issubclass(exc_type, (SystemExit, KeyboardInterrupt)):
         sys.__excepthook__(exc_type, exc_value, exc_tb)
         return
@@ -176,11 +101,11 @@ def _global_exception_handler(exc_type, exc_value, exc_tb):
     tb_str = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
     log.critical("Unhandled exception:\n%s", tb_str)
 
-    # Try to show a message box (only if QApplication is still alive)
     try:
         from PyQt6.QtWidgets import QApplication, QMessageBox
         app_inst = QApplication.instance()
-        if app_inst is not None:
+        # PERBAIKAN: Hanya tampilkan dialog box jika error terjadi di Main Thread!
+        if app_inst is not None and QThread.currentThread() == app_inst.thread():
             msg = QMessageBox()
             msg.setIcon(QMessageBox.Icon.Critical)
             msg.setWindowTitle("Anz-Creator — Error")
@@ -190,13 +115,10 @@ def _global_exception_handler(exc_type, exc_value, exc_tb):
     except Exception:
         pass
 
-
 if __name__ == "__main__":
-    # Required for PyInstaller on Windows to prevent duplicate processes
     import multiprocessing
     multiprocessing.freeze_support()
 
-    # Enable faulthandler to catch C-level segfaults
     import atexit
     import faulthandler
 
@@ -210,18 +132,13 @@ if __name__ == "__main__":
     _crash_file.flush()
     faulthandler.enable(file=_crash_file, all_threads=True)
 
-    # Register atexit handler to close crash file properly
-    _cf = _crash_file  # capture local reference for closure
-
+    _cf = _crash_file
     def _close_crash_file():
         if _cf and not _cf.closed:
             _cf.close()
 
     atexit.register(_close_crash_file)
-
-    # Install custom exception hook (AFTER all setup)
     sys.excepthook = _global_exception_handler
 
-    # Run app and exit cleanly
     exit_code = main()
     sys.exit(exit_code)
