@@ -52,7 +52,7 @@ class WatermarkRemovalPanel(QWidget):
         self._video_path: str = ""
         self._video_info: Optional[VideoInfo] = None
         self._video_meta: Optional[VideoMeta] = None
-        self._output_path: str = ""  # FIX: Initialize _output_path
+        self._output_path: str = ""
 
         self._build_ui()
 
@@ -295,7 +295,7 @@ class WatermarkRemovalPanel(QWidget):
         self.download_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
 
-        def _load_video_async(self, path: str):
+    def _load_video_async(self, path: str):
         """Load video in background thread to prevent UI freeze/crash."""
         if not os.path.isfile(path):
             self._show_error("File not found", f"Cannot find: {path}")
@@ -315,7 +315,7 @@ class WatermarkRemovalPanel(QWidget):
             if progress_callback:
                 progress_callback(10, "Reading video info…")
 
-            # Step 1: Get video info (this is fast, just header read)
+            # Step 1: Get video info
             try:
                 info = get_video_info(path)
             except Exception as exc:
@@ -331,7 +331,7 @@ class WatermarkRemovalPanel(QWidget):
             # Step 2: Try to extract first frame
             frame = None
 
-            # 2a: Try FFmpeg (only if already available, do NOT auto-download here)
+            # 2a: Try FFmpeg
             try:
                 import shutil
 
@@ -375,31 +375,13 @@ class WatermarkRemovalPanel(QWidget):
                                 (info.height, info.width, 3)
                             )
                             log.info("Frame extracted via FFmpeg.")
-                        else:
-                            log.warning(
-                                "FFmpeg size mismatch: got %d, expected %d",
-                                len(raw), expected,
-                            )
-                    else:
-                        stderr_msg = ""
-                        if proc.stderr:
-                            stderr_msg = proc.stderr.decode(
-                                "utf-8", errors="replace"
-                            )[:200]
-                        log.warning(
-                            "FFmpeg exit %d: %s", proc.returncode, stderr_msg
-                        )
-                else:
-                    log.info("FFmpeg not available yet, trying OpenCV…")
-            except subprocess.TimeoutExpired:
-                log.warning("FFmpeg timed out.")
             except Exception as exc:
                 log.warning("FFmpeg failed: %s", exc)
 
             if cancel_flag and cancel_flag():
                 return None
 
-            # 2b: Fallback to OpenCV (in a separate try block)
+            # 2b: Fallback to OpenCV
             if frame is None:
                 try:
                     import cv2
@@ -422,10 +404,6 @@ class WatermarkRemovalPanel(QWidget):
                             else:
                                 frame = cv2.cvtColor(bgr, cv2.COLOR_GRAY2RGB)
                             log.info("Frame extracted via OpenCV (%dx%d).", w, h)
-                        else:
-                            log.warning("OpenCV read() returned empty.")
-                    else:
-                        log.warning("OpenCV cannot open: %s", path)
                 except Exception as exc:
                     log.warning("OpenCV failed: %s\n%s", exc, traceback.format_exc())
 
@@ -434,17 +412,6 @@ class WatermarkRemovalPanel(QWidget):
                 pw = max(info.width, 640)
                 ph = max(info.height, 480)
                 frame = np.zeros((ph, pw, 3), dtype=np.uint8)
-                # Simple gray text
-                try:
-                    import cv2
-
-                    cv2.putText(
-                        frame, "Preview not available",
-                        (pw // 10, ph // 2),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.5, (100, 100, 100), 2,
-                    )
-                except Exception:
-                    pass
                 log.warning("Using placeholder frame.")
 
             if progress_callback:
@@ -490,11 +457,9 @@ class WatermarkRemovalPanel(QWidget):
                     self.progress.reset()
                     return
 
-                # Set original size BEFORE setting pixmap
                 self.click_frame.set_original_size(w, h)
                 self.click_frame._points.clear()
 
-                # Now set the pixmap
                 self.auto_preview.set_pixmap_direct(QPixmap(pixmap))
                 self.click_frame.set_pixmap_direct(QPixmap(pixmap))
 
@@ -538,11 +503,9 @@ class WatermarkRemovalPanel(QWidget):
 
         def _dl(progress_callback=None, cancel_flag=None):
             from core.video_io import _auto_download_ffmpeg
-
             return _auto_download_ffmpeg(app_bin)
 
         worker = Worker(_dl)
-        worker.signals.progress.connect(self.progress.update_progress)
         worker.signals.finished.connect(
             lambda r: log.info("FFmpeg ready: %s", r)
         )
@@ -695,7 +658,6 @@ class WatermarkRemovalPanel(QWidget):
     def _open_output_folder(self):
         path = self._output_path or "output"
         folder = os.path.dirname(path) if os.path.isfile(path) else "output"
-        # FIX: Use cross-platform folder opening
         if os.name == "nt":
             os.startfile(os.path.abspath(folder))
         else:
@@ -790,7 +752,6 @@ class SettingsPanel(QWidget):
                 dlg = ModelDownloadDialog(self)
                 dlg.show()
 
-                # FIX: Capture family and variant in closure properly
                 _fam = family
                 _var = variant
 
