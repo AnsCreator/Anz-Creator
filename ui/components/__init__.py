@@ -65,16 +65,15 @@ class VideoPreview(QLabel):
         )
         self.setText("No video loaded")
         self._pixmap: Optional[QPixmap] = None
-        self._fitting = False  # guard against infinite recursion
-        self._resize_timer = None  # debounce resize events
+        self._fitting = False
+        self._resize_timer = None
 
     def set_pixmap_direct(self, pixmap: QPixmap):
         """Set pixmap directly. This is the ONLY way to set the preview."""
         try:
             if pixmap is not None and not pixmap.isNull():
-                self._pixmap = QPixmap(pixmap)  # FIX: Make a copy to avoid shared state
+                self._pixmap = QPixmap(pixmap)
                 self.setText("")
-                # Schedule fit instead of calling directly
                 self._schedule_fit()
         except Exception:
             pass
@@ -98,7 +97,7 @@ class VideoPreview(QLabel):
             self._resize_timer = QTimer(self)
             self._resize_timer.setSingleShot(True)
             self._resize_timer.timeout.connect(self._fit)
-        self._resize_timer.start(10)  # 10ms debounce
+        self._resize_timer.start(10)
 
     def _fit(self):
         """Scale pixmap to fit widget while preserving aspect ratio."""
@@ -116,14 +115,13 @@ class VideoPreview(QLabel):
                 self._fitting = False
                 return
 
-            # Use original pixmap size for scaling
             scaled = self._pixmap.scaled(
                 QSize(w, h),
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
             if not scaled.isNull():
-                super().setPixmap(scaled)  # FIX: Call parent directly to avoid recursion
+                super().setPixmap(scaled)
         except Exception:
             pass
         finally:
@@ -136,26 +134,24 @@ class VideoPreview(QLabel):
 
     def setPixmap(self, pixmap):
         """Override to prevent external setPixmap calls from causing issues."""
-        # Only allow internal calls via _fit()
         if self._fitting:
             super().setPixmap(pixmap)
-        # Silently ignore external calls
 
 
 # ── Clickable Frame for SAM2 manual mode ─────────────────
 class ClickableFrame(VideoPreview):
     """Video preview that captures user click coordinates."""
-    point_added = pyqtSignal(int, int)  # x, y in original image coords
+    point_added = pyqtSignal(int, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._points: list[tuple[int, int]] = []
-        self._original_size = (0, 0)  # (w, h)
+        self._original_size = (0, 0)
         self.setCursor(Qt.CursorShape.CrossCursor)
         self.setStyleSheet(
             "background: #1a1a2e; border: 2px solid #00bfa5; border-radius: 8px;"
         )
-        self._drawing = False  # guard against recursive drawing
+        self._drawing = False
 
     def set_pixmap_direct(self, pixmap: QPixmap):
         """Override to also clear points when new image is set."""
@@ -173,14 +169,12 @@ class ClickableFrame(VideoPreview):
     def mousePressEvent(self, event: QMouseEvent):
         try:
             if (self._pixmap and not self._pixmap.isNull() and
-                    event.button() == Qt.MouseButton.LeftButton):
+                event.button() == Qt.MouseButton.LeftButton):
 
-                # Get current displayed pixmap
                 current_pm = self.pixmap()
                 if current_pm is None or current_pm.isNull():
                     return
 
-                # Calculate offset from centered pixmap
                 x_off = (self.width() - current_pm.width()) // 2
                 y_off = (self.height() - current_pm.height()) // 2
                 cx = event.pos().x() - x_off
@@ -214,7 +208,6 @@ class ClickableFrame(VideoPreview):
                 self._drawing = False
                 return
 
-            # Create a fresh copy of the original pixmap
             base_pm = QPixmap(self._pixmap)
             if base_pm.isNull():
                 self._drawing = False
@@ -226,7 +219,6 @@ class ClickableFrame(VideoPreview):
                 self._drawing = False
                 return
 
-            # Scale to current display size
             scaled_pm = base_pm.scaled(
                 QSize(w, h),
                 Qt.AspectRatioMode.KeepAspectRatio,
@@ -236,7 +228,6 @@ class ClickableFrame(VideoPreview):
                 self._drawing = False
                 return
 
-            # Draw points on the scaled pixmap
             painter = QPainter(scaled_pm)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
@@ -244,18 +235,15 @@ class ClickableFrame(VideoPreview):
                 sx = int(ox / ow * scaled_pm.width())
                 sy = int(oy / oh * scaled_pm.height())
 
-                # Outer circle (teal)
                 painter.setBrush(QColor(0, 191, 165, 200))
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawEllipse(sx - 6, sy - 6, 12, 12)
 
-                # Inner dot (white)
                 painter.setBrush(QColor(255, 255, 255))
                 painter.drawEllipse(sx - 3, sy - 3, 6, 6)
 
             painter.end()
 
-            # Update display without triggering recursion
             self._fitting = True
             super().setPixmap(scaled_pm)
             self._fitting = False
