@@ -382,7 +382,7 @@ class DebugPanel(QWidget):
     def _install_handler(self):
         handler = _QtLogHandler(self.log_text)
         handler.setLevel(logging.DEBUG)
-        formatter = logging.Formatter("[%asctime)s] %(levelname)-8s %(funcName)s — %(message)s", datefmt="%H:%M:%S")
+        formatter = logging.Formatter("[%(asctime)s] %(levelname)-8s %(funcName)s — %(message)s", datefmt="%H:%M:%S")
         handler.setFormatter(formatter)
 
         logger = logging.getLogger("AnzCreator")
@@ -477,7 +477,8 @@ class MainWindow(QMainWindow):
             log.warning(f"Startup update check failed: {e}")
 
     def closeEvent(self, event):
-        self.debug_panel.remove_handler()
+        if hasattr(self, 'debug_panel') and hasattr(self.debug_panel, 'remove_handler'):
+            self.debug_panel.remove_handler()
         try:
             from core.task_queue import TaskQueue
             TaskQueue().cancel_all()
