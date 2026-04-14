@@ -179,7 +179,7 @@ if __name__ == "__main__":
     )
     os.makedirs(os.path.dirname(_crash_log), exist_ok=True)
     _crash_file = open(_crash_log, "a")
-    _crash_file.write(f"\n\n=== Session started ===\n")
+    _crash_file.write("\n\n=== Session started ===\n")
     faulthandler.enable(file=_crash_file, all_threads=True)
 
     sys.excepthook = _global_exception_handler
