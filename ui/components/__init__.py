@@ -7,10 +7,8 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-import cv2
-import numpy as np
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QImage, QMouseEvent, QPainter, QPixmap
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QMouseEvent, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -56,7 +54,7 @@ class ProgressPanel(QWidget):
 
 # ── Video Preview Widget ────────────────────────────────
 class VideoPreview(QLabel):
-    """Display a video frame or thumbnail with aspect ratio preservation."""
+    """Display a video thumbnail with aspect ratio preservation. Pixmap-only."""
 
     def __init__(self, parent=None, min_h: int = 240):
         super().__init__(parent)
@@ -67,59 +65,40 @@ class VideoPreview(QLabel):
         )
         self.setText("No video loaded")
         self._pixmap: Optional[QPixmap] = None
-        self._rgb_ref = None  # prevent numpy GC
 
-    def set_frame(self, frame: np.ndarray):
-        """Display an OpenCV BGR/BGRA/grayscale frame safely."""
+    def set_pixmap_direct(self, pixmap: QPixmap):
+        """Set pixmap directly. This is the ONLY way to set the preview."""
         try:
-            if frame is None or frame.size == 0:
-                return
-            h, w = frame.shape[:2]
-            ch = frame.shape[2] if frame.ndim == 3 else 1
-
-            if ch == 4:
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
-            elif ch == 3:
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            elif ch == 1 or frame.ndim == 2:
-                rgb = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
-            else:
-                return
-
-            rgb = np.ascontiguousarray(rgb)
-            self._rgb_ref = rgb
-            qimg = QImage(rgb.data, w, h, w * 3, QImage.Format.Format_RGB888)
-            # Deep copy pixmap so it has NO reference to numpy memory
-            self._pixmap = QPixmap.fromImage(qimg.copy())
-            self._rgb_ref = None  # safe to release now, pixmap owns pixel data
-            self._fit()
+            if pixmap is not None and not pixmap.isNull():
+                self._pixmap = pixmap
+                self._fit()
         except Exception:
             pass
 
-    def set_pixmap_direct(self, pixmap: QPixmap):
-        """Set pixmap directly (already constructed, thread-safe)."""
-        self._pixmap = pixmap
-        self._fit()
-
     def set_pixmap_file(self, path: str):
-        self._pixmap = QPixmap(path)
-        self._fit()
+        try:
+            pm = QPixmap(path)
+            if not pm.isNull():
+                self._pixmap = pm
+                self._fit()
+        except Exception:
+            pass
 
     def _fit(self):
         try:
-            if self._pixmap and not self._pixmap.isNull():
-                w = self.width()
-                h = self.height()
-                if w > 0 and h > 0:
-                    from PyQt6.QtCore import QSize
-
-                    scaled = self._pixmap.scaled(
-                        QSize(w, h),
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation,
-                    )
-                    if not scaled.isNull():
-                        self.setPixmap(scaled)
+            if self._pixmap is None or self._pixmap.isNull():
+                return
+            w = self.width()
+            h = self.height()
+            if w <= 0 or h <= 0:
+                return
+            scaled = self._pixmap.scaled(
+                QSize(w, h),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            if not scaled.isNull():
+                self.setPixmap(scaled)
         except Exception:
             pass
 
@@ -145,20 +124,21 @@ class ClickableFrame(VideoPreview):
             "background: #1a1a2e; border: 2px solid #00bfa5; border-radius: 8px;"
         )
 
-    def set_frame(self, frame: np.ndarray):
+    def set_pixmap_direct(self, pixmap: QPixmap):
+        """Override to also clear points."""
         try:
-            if frame is None or frame.size == 0:
-                return
-            h, w = frame.shape[:2]
-            self._original_size = (w, h)
             self._points.clear()
-            super().set_frame(frame)
+            super().set_pixmap_direct(pixmap)
         except Exception:
             pass
 
     def mousePressEvent(self, event: QMouseEvent):
         try:
-            if self._pixmap and not self._pixmap.isNull() and event.button() == Qt.MouseButton.LeftButton:
+            if (
+                self._pixmap
+                and not self._pixmap.isNull()
+                and event.button() == Qt.MouseButton.LeftButton
+            ):
                 pm = self.pixmap()
                 if pm is None or pm.isNull():
                     return
@@ -167,8 +147,7 @@ class ClickableFrame(VideoPreview):
                 cx = event.pos().x() - x_off
                 cy = event.pos().y() - y_off
                 if 0 <= cx < pm.width() and 0 <= cy < pm.height():
-                    ow = self._original_size[0]
-                    oh = self._original_size[1]
+                    ow, oh = self._original_size
                     if ow > 0 and oh > 0:
                         ox = int(cx / pm.width() * ow)
                         oy = int(cy / pm.height() * oh)
@@ -182,14 +161,13 @@ class ClickableFrame(VideoPreview):
         try:
             if not self._pixmap or self._pixmap.isNull():
                 return
-            if self._original_size[0] <= 0 or self._original_size[1] <= 0:
+            ow, oh = self._original_size
+            if ow <= 0 or oh <= 0:
                 return
             w = self.width()
             h = self.height()
             if w <= 0 or h <= 0:
                 return
-
-            from PyQt6.QtCore import QSize
 
             pm = self._pixmap.scaled(
                 QSize(w, h),
@@ -202,8 +180,8 @@ class ClickableFrame(VideoPreview):
             painter = QPainter(pm)
             painter.setPen(Qt.PenStyle.NoPen)
             for ox, oy in self._points:
-                sx = int(ox / self._original_size[0] * pm.width())
-                sy = int(oy / self._original_size[1] * pm.height())
+                sx = int(ox / ow * pm.width())
+                sy = int(oy / oh * pm.height())
                 painter.setBrush(QColor(0, 191, 165, 200))
                 painter.drawEllipse(sx - 6, sy - 6, 12, 12)
                 painter.setBrush(QColor(255, 255, 255))
