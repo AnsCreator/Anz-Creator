@@ -78,7 +78,6 @@ class Settings:
                 return default
         return node
 
-    # PERBAIKAN: Fungsi khusus path untuk membaca %APPDATA%
     def get_path(self, dotpath: str, default: Any = None) -> str:
         """Mengembalikan nilai konfigurasi dan mengekstrak env vars (e.g. %APPDATA%)."""
         val = self.get(dotpath, default)
@@ -101,6 +100,7 @@ class Settings:
     @classmethod
     def reset_instance(cls):
         cls._instance = None
+
 
 def _deep_merge(base: dict, override: dict) -> dict:
     merged = base.copy()
