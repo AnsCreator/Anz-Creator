@@ -291,23 +291,20 @@ class _QtLogHandler(logging.Handler):
         super().__init__()
         self._widget = widget
         self._closed = False
-        self._is_emitting = False  # Mencegah Qt memicu perulangan re-render tak berujung
+        self._is_rendering = False  # Strict Lock untuk GUI Main Thread
         self.emitter = LogEmitter()
 
-        # Penambahan Qt.ConnectionType.QueuedConnection memastikan 100% aman
+        # Route sinyal ke metode internal untuk difilter, BUKAN langsung ke UI
         self.emitter.log_signal.connect(
-            self._widget.appendHtml, Qt.ConnectionType.QueuedConnection
+            self._render_log_safely, Qt.ConnectionType.QueuedConnection
         )
 
     def close_handler(self):
         self._closed = True
 
     def emit(self, record):
-        # Abaikan sinyal jika handler sudah ditutup ATAU sedang dalam proses menggambar log.
-        if self._closed or self._is_emitting:
+        if self._closed:
             return
-
-        self._is_emitting = True
         try:
             msg = self.format(record)
             msg = msg.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -323,8 +320,19 @@ class _QtLogHandler(logging.Handler):
             self.emitter.log_signal.emit(f"<span style='color:{color}'>{msg}</span>")
         except Exception:
             pass
+
+    # Fungsi ini dieksekusi 100% di Main Thread. Ini akan mencegah
+    # perulangan jika `appendHtml` memicu Qt untuk men-generate log internal baru.
+    def _render_log_safely(self, msg):
+        if self._closed or self._is_rendering:
+            return
+        self._is_rendering = True
+        try:
+            self._widget.appendHtml(msg)
+        except Exception:
+            pass
         finally:
-            self._is_emitting = False
+            self._is_rendering = False
 
 
 class DebugPanel(QWidget):
