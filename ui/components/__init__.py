@@ -168,9 +168,9 @@ class ClickableFrame(VideoPreview):
 
     def mousePressEvent(self, event: QMouseEvent):
         try:
-            if (self._pixmap and not self._pixmap.isNull() and
-                event.button() == Qt.MouseButton.LeftButton):
-
+            cond1 = self._pixmap and not self._pixmap.isNull()
+            cond2 = event.button() == Qt.MouseButton.LeftButton
+            if cond1 and cond2:
                 current_pm = self.pixmap()
                 if current_pm is None or current_pm.isNull():
                     return
