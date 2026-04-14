@@ -295,7 +295,7 @@ class WatermarkRemovalPanel(QWidget):
         self.download_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
 
-    def _load_video_async(self, path: str):
+        def _load_video_async(self, path: str):
         """Load video in background thread to prevent UI freeze/crash."""
         if not os.path.isfile(path):
             self._show_error("File not found", f"Cannot find: {path}")
@@ -460,56 +460,56 @@ class WatermarkRemovalPanel(QWidget):
             return {"path": path, "info": info, "rgb": rgb, "w": w, "h": h}
 
         def _on_loaded(result):
-    self.cancel_btn.setEnabled(False)
-    if result is None:
-        self.progress.reset()
-        return
-    try:
-        from PyQt6.QtGui import QImage, QPixmap
+            self.cancel_btn.setEnabled(False)
+            if result is None:
+                self.progress.reset()
+                return
+            try:
+                from PyQt6.QtGui import QImage, QPixmap
 
-        self._video_path = result["path"]
-        self._video_info = result["info"]
-        info = result["info"]
+                self._video_path = result["path"]
+                self._video_info = result["info"]
+                info = result["info"]
 
-        self.info_bar.setText(
-            f"<b>{os.path.basename(result['path'])}</b>  •  "
-            f"{info.width}×{info.height}  •  {info.fps:.1f} fps  •  "
-            f"{info.frame_count} frames  •  {info.duration:.1f}s"
-        )
-        self.info_bar.show()
+                self.info_bar.setText(
+                    f"<b>{os.path.basename(result['path'])}</b>  •  "
+                    f"{info.width}×{info.height}  •  {info.fps:.1f} fps  •  "
+                    f"{info.frame_count} frames  •  {info.duration:.1f}s"
+                )
+                self.info_bar.show()
 
-        rgb = result["rgb"]
-        w, h = result["w"], result["h"]
+                rgb = result["rgb"]
+                w, h = result["w"], result["h"]
 
-        qimg = QImage(rgb.data, w, h, w * 3, QImage.Format.Format_RGB888)
-        pixmap = QPixmap.fromImage(qimg.copy())
-        del qimg
+                qimg = QImage(rgb.data, w, h, w * 3, QImage.Format.Format_RGB888)
+                pixmap = QPixmap.fromImage(qimg.copy())
+                del qimg
 
-        if pixmap.isNull():
-            log.warning("Created pixmap is null, skipping display.")
-            self.progress.reset()
-            return
+                if pixmap.isNull():
+                    log.warning("Created pixmap is null, skipping display.")
+                    self.progress.reset()
+                    return
 
-        # Set original size BEFORE setting pixmap
-        self.click_frame.set_original_size(w, h)
-        self.click_frame._points.clear()
-        
-        # Now set the pixmap
-        self.auto_preview.set_pixmap_direct(QPixmap(pixmap))
-        self.click_frame.set_pixmap_direct(QPixmap(pixmap))
+                # Set original size BEFORE setting pixmap
+                self.click_frame.set_original_size(w, h)
+                self.click_frame._points.clear()
 
-        self.auto_detect_btn.setEnabled(True)
-        self.manual_run_btn.setEnabled(True)
-        self.progress.reset()
-        log.info("Video displayed: %s", result["path"])
+                # Now set the pixmap
+                self.auto_preview.set_pixmap_direct(QPixmap(pixmap))
+                self.click_frame.set_pixmap_direct(QPixmap(pixmap))
 
-        if os.name == "nt":
-            self._ensure_ffmpeg_background()
+                self.auto_detect_btn.setEnabled(True)
+                self.manual_run_btn.setEnabled(True)
+                self.progress.reset()
+                log.info("Video displayed: %s", result["path"])
 
-    except Exception as exc:
-        import traceback
-        log.error("Display failed: %s\n%s", exc, traceback.format_exc())
-        self._show_error("Display Error", str(exc))
+                if os.name == "nt":
+                    self._ensure_ffmpeg_background()
+
+            except Exception as exc:
+                import traceback
+                log.error("Display failed: %s\n%s", exc, traceback.format_exc())
+                self._show_error("Display Error", str(exc))
 
         def _on_load_error(err):
             self.cancel_btn.setEnabled(False)
