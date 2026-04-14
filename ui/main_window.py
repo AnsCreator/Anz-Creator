@@ -79,11 +79,11 @@ class Sidebar(QFrame):
         )
         layout.addWidget(title)
 
-        version = QLabel("v1.0.0")
-        version.setStyleSheet(
+        self.version_label = QLabel("v1.0.0")
+        self.version_label.setStyleSheet(
             "font-size: 10px; color: #546e7a; padding: 0 4px 12px 4px; border: none;"
         )
-        layout.addWidget(version)
+        layout.addWidget(self.version_label)
 
         # Separator
         sep = QFrame()
@@ -100,7 +100,7 @@ class Sidebar(QFrame):
         )
         layout.addWidget(nav_label)
 
-        # Feature buttons
+        # Feature buttons — all navigable buttons go in self.buttons
         self.buttons: list[SidebarButton] = []
 
         self.btn_watermark = SidebarButton("Watermark Removal", "🧹")
@@ -144,8 +144,9 @@ class Sidebar(QFrame):
         self.buttons.append(self.btn_debug)
         layout.addWidget(self.btn_debug)
 
-        # About
+        # About — FIX: Add to buttons list so it participates in exclusive toggle
         self.btn_about = SidebarButton("About", "ℹ️")
+        self.buttons.append(self.btn_about)
         layout.addWidget(self.btn_about)
 
         # Wire exclusive toggle
@@ -391,8 +392,6 @@ class DebugPanel(QWidget):
         layout.addWidget(self.log_text)
 
         # Log file path info
-        import os
-
         log_dir = os.path.join(
             os.environ.get("APPDATA", os.path.expanduser("~")),
             "Anz-Creator", "logs",
@@ -417,6 +416,12 @@ class DebugPanel(QWidget):
             def emit(self, record):
                 try:
                     msg = self.format(record)
+                    # Escape HTML entities to prevent injection
+                    msg = (
+                        msg.replace("&", "&amp;")
+                        .replace("<", "&lt;")
+                        .replace(">", "&gt;")
+                    )
                     # Color-code by level
                     if record.levelno >= logging.ERROR:
                         color = "#f85149"
@@ -491,11 +496,18 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(self.stack, 1)
 
-        # Wire sidebar buttons
+        # Wire sidebar buttons to stack indices
         self.sidebar.btn_watermark.clicked.connect(lambda: self.stack.setCurrentIndex(0))
         self.sidebar.btn_settings.clicked.connect(lambda: self.stack.setCurrentIndex(1))
-        self.sidebar.btn_about.clicked.connect(lambda: self._show_about())
-        self.sidebar.btn_debug.clicked.connect(lambda: self._show_debug())
+        self.sidebar.btn_about.clicked.connect(lambda: self.stack.setCurrentIndex(2))
+        self.sidebar.btn_debug.clicked.connect(lambda: self.stack.setCurrentIndex(3))
+
+        # Update version label from version.txt
+        try:
+            from core.updater import get_current_version
+            self.sidebar.version_label.setText(get_current_version())
+        except Exception:
+            pass
 
         # Status bar
         self.statusBar().showMessage("Ready")
@@ -536,17 +548,6 @@ class MainWindow(QMainWindow):
         worker = Worker(_check)
         worker.signals.finished.connect(_on_result)
         TaskQueue().submit(worker)
-
-    def _show_about(self):
-        self.stack.setCurrentIndex(2)
-        for btn in self.sidebar.buttons:
-            btn.setChecked(False)
-
-    def _show_debug(self):
-        self.stack.setCurrentIndex(3)
-        for btn in self.sidebar.buttons:
-            btn.setChecked(False)
-        self.sidebar.btn_debug.setChecked(True)
 
     def closeEvent(self, event):
         from core.task_queue import TaskQueue

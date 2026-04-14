@@ -52,6 +52,7 @@ class WatermarkRemovalPanel(QWidget):
         self._video_path: str = ""
         self._video_info: Optional[VideoInfo] = None
         self._video_meta: Optional[VideoMeta] = None
+        self._output_path: str = ""  # FIX: Initialize _output_path
 
         self._build_ui()
 
@@ -694,14 +695,19 @@ class WatermarkRemovalPanel(QWidget):
 
     # ── Output folder ────────────────────────────────────
     def _open_output_folder(self):
-        path = getattr(self, "_output_path", "output")
+        path = self._output_path or "output"
         folder = os.path.dirname(path) if os.path.isfile(path) else "output"
-        os.startfile(folder) if os.name == "nt" else os.system(f'xdg-open "{folder}"')
+        # FIX: Use cross-platform folder opening
+        if os.name == "nt":
+            os.startfile(os.path.abspath(folder))
+        else:
+            import subprocess
+            subprocess.Popen(["xdg-open", os.path.abspath(folder)])
 
     # ── Helpers ──────────────────────────────────────────
     def _show_error(self, title: str, msg: str):
-        QMessageBox.critical(self, title, msg)
-        self.progress.update_progress(0, f"Error: {msg[:80]}")
+        QMessageBox.critical(self, title, str(msg))
+        self.progress.update_progress(0, f"Error: {str(msg)[:80]}")
 
 
 # ── Settings Panel ───────────────────────────────────────
@@ -771,6 +777,8 @@ class SettingsPanel(QWidget):
         return group
 
     def _on_model_changed(self, family: str, variant: str):
+        if variant is None:
+            return
         self.settings.set(f"models.{family}", variant)
         log.info("Model changed: %s → %s", family, variant)
 
@@ -783,16 +791,24 @@ class SettingsPanel(QWidget):
             if reply == QMessageBox.StandardButton.Yes:
                 dlg = ModelDownloadDialog(self)
                 dlg.show()
-                worker = Worker(
-                    lambda pc=None, cf=None: self.model_mgr.download(
-                        family, variant, progress_callback=pc, cancel_flag=cf,
+
+                # FIX: Capture family and variant in closure properly
+                _fam = family
+                _var = variant
+
+                def _do_download(progress_callback=None, cancel_flag=None):
+                    return self.model_mgr.download(
+                        _fam, _var,
+                        progress_callback=progress_callback,
+                        cancel_flag=cancel_flag,
                     )
-                )
+
+                worker = Worker(_do_download)
                 worker.signals.progress.connect(dlg.update)
                 worker.signals.finished.connect(lambda _: dlg.close())
                 worker.signals.error.connect(lambda e: (
                     dlg.close(),
-                    QMessageBox.critical(self, "Error", e),
+                    QMessageBox.critical(self, "Error", str(e)),
                 ))
                 dlg.cancel_btn.clicked.connect(worker.cancel)
                 TaskQueue().submit(worker)
