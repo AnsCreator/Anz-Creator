@@ -12,9 +12,9 @@ from PyQt6.QtWidgets import (
     QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
 
-# Jika ui/components/ belum selesai, ganti dengan dummy import bila perlu.
 from ui.feature_panel import SettingsPanel, WatermarkRemovalPanel
 from utils.logger import log
+
 
 class SidebarButton(QPushButton):
     def __init__(self, text: str, icon_char: str = "", parent=None):
@@ -28,6 +28,7 @@ class SidebarButton(QPushButton):
             QPushButton:hover { background: rgba(255,255,255,0.06); color: #e0e0e0; }
             QPushButton:checked { background: rgba(0,191,165,0.15); color: #80cbc4; font-weight: bold; border-left: 3px solid #00bfa5; }
         """)
+
 
 class Sidebar(QFrame):
     def __init__(self, parent=None):
@@ -103,6 +104,7 @@ class Sidebar(QFrame):
                 btn.setChecked(False)
         clicked.setChecked(True)
 
+
 class AboutPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -118,7 +120,7 @@ class AboutPanel(QWidget):
         try:
             from core.updater import get_current_version
             ver = get_current_version()
-        except:
+        except Exception:
             ver = "1.0.0"
 
         self.ver_label = QLabel(f"Version: {ver}")
@@ -211,17 +213,21 @@ class AboutPanel(QWidget):
         self.update_status.setText(f"<span style='color:#ef5350'>Update check failed: {err}</span>")
 
     def _install_update(self):
-        if not self._update_info: return
+        if not self._update_info:
+            return
+
         from PyQt6.QtWidgets import QMessageBox
         reply = QMessageBox.question(
             self, "Install Update",
             f"Download and install {self._update_info.get('tag','')}?\n\nThe application will restart after updating.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
-        if reply != QMessageBox.StandardButton.Yes: return
+        if reply != QMessageBox.StandardButton.Yes:
+            return
 
         self.install_btn.setEnabled(False)
-        if hasattr(self.update_progress, 'show'): self.update_progress.show()
+        if hasattr(self.update_progress, 'show'):
+            self.update_progress.show()
 
         try:
             from core.task_queue import TaskQueue, Worker
@@ -231,7 +237,8 @@ class AboutPanel(QWidget):
 
             def _download_and_apply(progress_callback=None, cancel_flag=None):
                 zip_path = download_update(url, progress_callback=progress_callback, cancel_flag=cancel_flag)
-                if not zip_path: return None
+                if not zip_path:
+                    return None
                 return apply_update(zip_path)
 
             worker = Worker(_download_and_apply)
@@ -261,13 +268,14 @@ class AboutPanel(QWidget):
 
     def _on_update_error(self, err):
         self.install_btn.setEnabled(True)
-        if hasattr(self.update_progress, 'hide'): self.update_progress.hide()
+        if hasattr(self.update_progress, 'hide'):
+            self.update_progress.hide()
         self.update_status.setText(f"<span style='color:#ef5350'>Update failed: {err}</span>")
 
 
-# PERBAIKAN: Menambahkan QObject untuk Emitter agar Thread-Safe!
 class LogEmitter(QObject):
     log_signal = pyqtSignal(str)
+
 
 class _QtLogHandler(logging.Handler):
     """Logging handler that writes to a QPlainTextEdit widget in a Thread-Safe way."""
@@ -282,15 +290,20 @@ class _QtLogHandler(logging.Handler):
         self._closed = True
 
     def emit(self, record):
-        if self._closed: return
+        if self._closed:
+            return
         try:
             msg = self.format(record)
             msg = msg.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            if record.levelno >= logging.ERROR: color = "#f85149"
-            elif record.levelno >= logging.WARNING: color = "#d29922"
-            elif record.levelno >= logging.INFO: color = "#8b949e"
-            else: color = "#6e7681"
-            
+            if record.levelno >= logging.ERROR:
+                color = "#f85149"
+            elif record.levelno >= logging.WARNING:
+                color = "#d29922"
+            elif record.levelno >= logging.INFO:
+                color = "#8b949e"
+            else:
+                color = "#6e7681"
+
             # Emit signal alih-alih merender ke GUI secara langsung
             self.emitter.log_signal.emit(f"<span style='color:{color}'>{msg}</span>")
         except Exception:
@@ -443,7 +456,7 @@ class MainWindow(QMainWindow):
         try:
             from core.task_queue import TaskQueue
             TaskQueue().cancel_all()
-        except:
+        except Exception:
             pass
         log.info("Application closing.")
         event.accept()
