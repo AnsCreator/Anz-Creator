@@ -293,7 +293,7 @@ class _QtLogHandler(logging.Handler):
         self._closed = False
         self._is_emitting = False  # Mencegah Qt memicu perulangan re-render tak berujung
         self.emitter = LogEmitter()
-        
+
         # Penambahan Qt.ConnectionType.QueuedConnection memastikan 100% aman
         self.emitter.log_signal.connect(
             self._widget.appendHtml, Qt.ConnectionType.QueuedConnection
