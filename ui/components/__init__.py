@@ -172,9 +172,9 @@ class ClickableFrame(VideoPreview):
 
     def mousePressEvent(self, event: QMouseEvent):
         try:
-            if (self._pixmap and not self._pixmap.isNull() and 
-                event.button() == Qt.MouseButton.LeftButton):
-                
+            if (self._pixmap and not self._pixmap.isNull() and
+                    event.button() == Qt.MouseButton.LeftButton):
+
                 # Get current displayed pixmap
                 current_pm = self.pixmap()
                 if current_pm is None or current_pm.isNull():
@@ -208,7 +208,7 @@ class ClickableFrame(VideoPreview):
             if not self._pixmap or self._pixmap.isNull():
                 self._drawing = False
                 return
-                
+
             ow, oh = self._original_size
             if ow <= 0 or oh <= 0:
                 self._drawing = False
@@ -239,27 +239,27 @@ class ClickableFrame(VideoPreview):
             # Draw points on the scaled pixmap
             painter = QPainter(scaled_pm)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            
+
             for ox, oy in self._points:
                 sx = int(ox / ow * scaled_pm.width())
                 sy = int(oy / oh * scaled_pm.height())
-                
+
                 # Outer circle (teal)
                 painter.setBrush(QColor(0, 191, 165, 200))
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawEllipse(sx - 6, sy - 6, 12, 12)
-                
+
                 # Inner dot (white)
                 painter.setBrush(QColor(255, 255, 255))
                 painter.drawEllipse(sx - 3, sy - 3, 6, 6)
-            
+
             painter.end()
-            
+
             # Update display without triggering recursion
             self._fitting = True
             super().setPixmap(scaled_pm)
             self._fitting = False
-            
+
         except Exception:
             pass
         finally:
