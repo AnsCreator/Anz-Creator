@@ -321,7 +321,6 @@ class AboutPanel(QWidget):
         )
 
         import subprocess
-        import sys
 
         # Launch updater script and exit
         if os.name == "nt":
