@@ -6,7 +6,7 @@ Entry point: initializes Qt app, applies dark material theme, launches main wind
 import os
 import sys
 
-# PERBAIKAN: Dukungan absolut untuk PyInstaller (saat jadi .exe)
+# Dukungan absolut untuk PyInstaller (saat jadi .exe)
 if getattr(sys, 'frozen', False):
     _PROJECT_ROOT = sys._MEIPASS
 else:
@@ -21,6 +21,7 @@ from utils.logger import log
 
 # Global reference to keep crash file open for faulthandler
 _crash_file = None
+
 
 def main() -> int:
     log.info("=" * 50)
@@ -92,6 +93,7 @@ def main() -> int:
 
     return exit_code
 
+
 def _global_exception_handler(exc_type, exc_value, exc_tb):
     if issubclass(exc_type, (SystemExit, KeyboardInterrupt)):
         sys.__excepthook__(exc_type, exc_value, exc_tb)
@@ -104,7 +106,7 @@ def _global_exception_handler(exc_type, exc_value, exc_tb):
     try:
         from PyQt6.QtWidgets import QApplication, QMessageBox
         app_inst = QApplication.instance()
-        # PERBAIKAN: Hanya tampilkan dialog box jika error terjadi di Main Thread!
+        # Hanya tampilkan dialog box jika error terjadi di Main Thread!
         if app_inst is not None and QThread.currentThread() == app_inst.thread():
             msg = QMessageBox()
             msg.setIcon(QMessageBox.Icon.Critical)
@@ -114,6 +116,7 @@ def _global_exception_handler(exc_type, exc_value, exc_tb):
             msg.exec()
     except Exception:
         pass
+
 
 if __name__ == "__main__":
     import multiprocessing
@@ -133,6 +136,7 @@ if __name__ == "__main__":
     faulthandler.enable(file=_crash_file, all_threads=True)
 
     _cf = _crash_file
+
     def _close_crash_file():
         if _cf and not _cf.closed:
             _cf.close()
