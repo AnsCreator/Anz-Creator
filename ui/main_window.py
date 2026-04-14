@@ -4,6 +4,7 @@ Main Window — shell with sidebar navigation + content area.
 
 from __future__ import annotations
 
+import logging
 import os
 
 from PyQt6.QtCore import Qt
@@ -144,7 +145,7 @@ class Sidebar(QFrame):
         self.buttons.append(self.btn_debug)
         layout.addWidget(self.btn_debug)
 
-        # About — FIX: Add to buttons list so it participates in exclusive toggle
+        # About
         self.btn_about = SidebarButton("About", "ℹ️")
         self.buttons.append(self.btn_about)
         layout.addWidget(self.btn_about)
@@ -345,11 +346,53 @@ class AboutPanel(QWidget):
         )
 
 
+# ── Qt Log Handler (defined at module level so we can remove it) ─────
+class _QtLogHandler(logging.Handler):
+    """Logging handler that writes to a QPlainTextEdit widget."""
+
+    def __init__(self, widget):
+        super().__init__()
+        self._widget = widget
+        self._closed = False
+
+    def close_handler(self):
+        """Mark handler as closed — all future emits become no-ops."""
+        self._closed = True
+
+    def emit(self, record):
+        if self._closed:
+            return
+        try:
+            msg = self.format(record)
+            # Escape HTML entities to prevent injection
+            msg = (
+                msg.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+            )
+            # Color-code by level
+            if record.levelno >= logging.ERROR:
+                color = "#f85149"
+            elif record.levelno >= logging.WARNING:
+                color = "#d29922"
+            elif record.levelno >= logging.INFO:
+                color = "#8b949e"
+            else:
+                color = "#6e7681"
+            self._widget.appendHtml(
+                f"<span style='color:{color}'>{msg}</span>"
+            )
+        except Exception:
+            pass
+
+
 class DebugPanel(QWidget):
     """Live debug log viewer — shows application logs in real-time."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._log_handler = None
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(8)
@@ -406,38 +449,7 @@ class DebugPanel(QWidget):
 
     def _install_handler(self):
         """Attach a custom logging handler that writes to the text widget."""
-        import logging
-
-        class QtLogHandler(logging.Handler):
-            def __init__(self, widget):
-                super().__init__()
-                self._widget = widget
-
-            def emit(self, record):
-                try:
-                    msg = self.format(record)
-                    # Escape HTML entities to prevent injection
-                    msg = (
-                        msg.replace("&", "&amp;")
-                        .replace("<", "&lt;")
-                        .replace(">", "&gt;")
-                    )
-                    # Color-code by level
-                    if record.levelno >= logging.ERROR:
-                        color = "#f85149"
-                    elif record.levelno >= logging.WARNING:
-                        color = "#d29922"
-                    elif record.levelno >= logging.INFO:
-                        color = "#8b949e"
-                    else:
-                        color = "#6e7681"
-                    self._widget.appendHtml(
-                        f"<span style='color:{color}'>{msg}</span>"
-                    )
-                except Exception:
-                    pass
-
-        handler = QtLogHandler(self.log_text)
+        handler = _QtLogHandler(self.log_text)
         handler.setLevel(logging.DEBUG)
         formatter = logging.Formatter(
             "[%(asctime)s] %(levelname)-8s %(funcName)s — %(message)s",
@@ -447,6 +459,15 @@ class DebugPanel(QWidget):
 
         logger = logging.getLogger("AnzCreator")
         logger.addHandler(handler)
+        self._log_handler = handler
+
+    def remove_handler(self):
+        """Remove the Qt log handler from the logger — call before shutdown."""
+        if self._log_handler is not None:
+            self._log_handler.close_handler()
+            logger = logging.getLogger("AnzCreator")
+            logger.removeHandler(self._log_handler)
+            self._log_handler = None
 
     def _clear(self):
         self.log_text.clear()
@@ -550,6 +571,12 @@ class MainWindow(QMainWindow):
         TaskQueue().submit(worker)
 
     def closeEvent(self, event):
+        # FIX: Remove Qt log handler FIRST to prevent stack overflow.
+        # The handler holds a reference to QPlainTextEdit — if it's still
+        # registered when Qt starts destroying widgets, appendHtml() calls
+        # on a half-destroyed widget cause infinite recursion.
+        self.debug_panel.remove_handler()
+
         from core.task_queue import TaskQueue
         TaskQueue().cancel_all()
         log.info("Application closing.")
