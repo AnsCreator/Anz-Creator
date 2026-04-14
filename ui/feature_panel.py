@@ -301,116 +301,153 @@ class WatermarkRemovalPanel(QWidget):
             return
 
         self.progress.update_progress(0, "Loading video…")
+        self.cancel_btn.setEnabled(True)
 
         def _do_load(progress_callback=None, cancel_flag=None):
             import subprocess
+            import traceback
 
-            import cv2
             import numpy as np
 
-            from core.video_io import _find_ffmpeg
+            log.info("Loading video: %s", path)
 
             if progress_callback:
                 progress_callback(10, "Reading video info…")
 
-            # Get video info (OpenCV + ffprobe fallback)
-            info = get_video_info(path)
+            # Step 1: Get video info (this is fast, just header read)
+            try:
+                info = get_video_info(path)
+            except Exception as exc:
+                log.error("get_video_info failed: %s", exc)
+                raise RuntimeError(f"Cannot read video info: {exc}")
+
+            if cancel_flag and cancel_flag():
+                return None
 
             if progress_callback:
                 progress_callback(30, "Extracting first frame…")
 
-            # Try FFmpeg first (more robust than OpenCV for reading frames)
+            # Step 2: Try to extract first frame
             frame = None
-            ffmpeg_bin = _find_ffmpeg()
-            try:
-                cmd = [
-                    ffmpeg_bin, "-y",
-                    "-i", path,
-                    "-vframes", "1",
-                    "-f", "image2pipe",
-                    "-pix_fmt", "rgb24",
-                    "-vcodec", "rawvideo",
-                    "-loglevel", "error",
-                    "-",
-                ]
-                si = None
-                cf = 0
-                if os.name == "nt":
-                    si = subprocess.STARTUPINFO()
-                    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                    si.wShowWindow = 0
-                    cf = subprocess.CREATE_NO_WINDOW
 
-                proc = subprocess.run(
-                    cmd, capture_output=True, timeout=15,
-                    startupinfo=si, creationflags=cf,
-                )
-                if proc.returncode == 0 and len(proc.stdout) > 0:
-                    raw = np.frombuffer(proc.stdout, dtype=np.uint8)
-                    expected = info.width * info.height * 3
-                    if expected > 0 and len(raw) >= expected:
-                        frame = raw[:expected].reshape(
-                            (info.height, info.width, 3)
-                        )
-                        log.info("Frame extracted via FFmpeg.")
+            # 2a: Try FFmpeg (only if already available, do NOT auto-download here)
+            try:
+                import shutil
+
+                from core.video_io import _app_bin_dir
+
+                ffmpeg_bin = shutil.which("ffmpeg")
+                if not ffmpeg_bin:
+                    app_bin = _app_bin_dir()
+                    candidate = os.path.join(app_bin, "ffmpeg.exe")
+                    if os.path.isfile(candidate):
+                        ffmpeg_bin = candidate
+
+                if ffmpeg_bin:
+                    cmd = [
+                        ffmpeg_bin, "-y",
+                        "-i", path,
+                        "-vframes", "1",
+                        "-f", "image2pipe",
+                        "-pix_fmt", "rgb24",
+                        "-vcodec", "rawvideo",
+                        "-loglevel", "error",
+                        "-",
+                    ]
+                    si = None
+                    cf = 0
+                    if os.name == "nt":
+                        si = subprocess.STARTUPINFO()
+                        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                        si.wShowWindow = 0
+                        cf = subprocess.CREATE_NO_WINDOW
+
+                    proc = subprocess.run(
+                        cmd, capture_output=True, timeout=30,
+                        startupinfo=si, creationflags=cf,
+                    )
+                    if proc.returncode == 0 and len(proc.stdout) > 0:
+                        raw = np.frombuffer(proc.stdout, dtype=np.uint8)
+                        expected = info.width * info.height * 3
+                        if expected > 0 and len(raw) >= expected:
+                            frame = raw[:expected].reshape(
+                                (info.height, info.width, 3)
+                            )
+                            log.info("Frame extracted via FFmpeg.")
+                        else:
+                            log.warning(
+                                "FFmpeg size mismatch: got %d, expected %d",
+                                len(raw), expected,
+                            )
                     else:
+                        stderr_msg = ""
+                        if proc.stderr:
+                            stderr_msg = proc.stderr.decode(
+                                "utf-8", errors="replace"
+                            )[:200]
                         log.warning(
-                            "FFmpeg raw size %d != expected %d",
-                            len(raw), expected,
+                            "FFmpeg exit %d: %s", proc.returncode, stderr_msg
                         )
                 else:
-                    stderr = proc.stderr.decode("utf-8", errors="replace")[:200]
-                    log.warning("FFmpeg exited %d: %s", proc.returncode, stderr)
-            except FileNotFoundError:
-                log.warning(
-                    "FFmpeg not found. Install it: "
-                    "winget install ffmpeg  OR  choco install ffmpeg"
-                )
+                    log.info("FFmpeg not available yet, trying OpenCV…")
+            except subprocess.TimeoutExpired:
+                log.warning("FFmpeg timed out.")
             except Exception as exc:
-                log.warning("FFmpeg frame extract failed: %s", exc)
+                log.warning("FFmpeg failed: %s", exc)
 
-            # Fallback to OpenCV
+            if cancel_flag and cancel_flag():
+                return None
+
+            # 2b: Fallback to OpenCV (in a separate try block)
             if frame is None:
                 try:
+                    import cv2
+
                     log.info("Trying OpenCV frame read…")
                     cap = cv2.VideoCapture(path)
                     if cap.isOpened():
                         ret, bgr = cap.read()
                         cap.release()
                         if ret and bgr is not None:
-                            # Update dimensions from actual frame
                             h, w = bgr.shape[:2]
                             if info.width <= 0 or info.height <= 0:
                                 info.width = w
                                 info.height = h
-                                log.info(
-                                    "Updated dimensions from frame: %dx%d",
-                                    w, h,
-                                )
-                            frame = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-                            log.info("Frame extracted via OpenCV.")
+                            ch = bgr.shape[2] if bgr.ndim == 3 else 1
+                            if ch == 4:
+                                frame = cv2.cvtColor(bgr, cv2.COLOR_BGRA2RGB)
+                            elif ch == 3:
+                                frame = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                            else:
+                                frame = cv2.cvtColor(bgr, cv2.COLOR_GRAY2RGB)
+                            log.info("Frame extracted via OpenCV (%dx%d).", w, h)
                         else:
-                            log.warning("OpenCV read() returned empty frame.")
+                            log.warning("OpenCV read() returned empty.")
                     else:
                         log.warning("OpenCV cannot open: %s", path)
                 except Exception as exc:
-                    log.warning("OpenCV frame read failed: %s", exc)
+                    log.warning("OpenCV failed: %s\n%s", exc, traceback.format_exc())
 
+            # 2c: Placeholder if everything failed
             if frame is None:
-                # Last resort: placeholder
-                pw = info.width if info.width > 0 else 640
-                ph = info.height if info.height > 0 else 480
+                pw = max(info.width, 640)
+                ph = max(info.height, 480)
                 frame = np.zeros((ph, pw, 3), dtype=np.uint8)
-                cv2.putText(
-                    frame, "Preview not available",
-                    (pw // 10, ph // 2),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (128, 128, 128), 2,
-                )
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                log.warning("Using placeholder frame for preview.")
+                # Simple gray text
+                try:
+                    import cv2
+
+                    cv2.putText(
+                        frame, "Preview not available",
+                        (pw // 10, ph // 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.5, (100, 100, 100), 2,
+                    )
+                except Exception:
+                    pass
+                log.warning("Using placeholder frame.")
 
             if progress_callback:
-                progress_callback(80, "Preparing preview…")
+                progress_callback(90, "Preparing preview…")
 
             rgb = np.ascontiguousarray(frame)
             h, w = rgb.shape[:2]
@@ -418,9 +455,14 @@ class WatermarkRemovalPanel(QWidget):
             if progress_callback:
                 progress_callback(100, "Video loaded.")
 
+            log.info("Video ready: %dx%d", w, h)
             return {"path": path, "info": info, "rgb": rgb, "w": w, "h": h}
 
         def _on_loaded(result):
+            self.cancel_btn.setEnabled(False)
+            if result is None:
+                self.progress.reset()
+                return
             try:
                 from PyQt6.QtGui import QImage, QPixmap
 
@@ -435,13 +477,12 @@ class WatermarkRemovalPanel(QWidget):
                 )
                 self.info_bar.show()
 
-                # Create QPixmap from pre-converted RGB data
                 rgb = result["rgb"]
                 w, h = result["w"], result["h"]
+                self._frame_rgb_ref = rgb  # prevent GC
+
                 qimg = QImage(rgb.data, w, h, w * 3, QImage.Format.Format_RGB888)
                 pixmap = QPixmap.fromImage(qimg.copy())
-
-                self._frame_rgb_ref = rgb  # prevent GC
 
                 self.auto_preview._pixmap = pixmap
                 self.auto_preview._fit()
@@ -453,20 +494,56 @@ class WatermarkRemovalPanel(QWidget):
                 self.auto_detect_btn.setEnabled(True)
                 self.manual_run_btn.setEnabled(True)
                 self.progress.reset()
-                log.info("Video loaded: %s", result["path"])
+                log.info("Video displayed: %s", result["path"])
+
+                # Trigger FFmpeg download in background for next time
+                if os.name == "nt":
+                    self._ensure_ffmpeg_background()
+
             except Exception as exc:
                 import traceback
 
-                log.error("UI update failed: %s\n%s", exc, traceback.format_exc())
+                log.error("Display failed: %s\n%s", exc, traceback.format_exc())
                 self._show_error("Display Error", str(exc))
 
         def _on_load_error(err):
+            self.cancel_btn.setEnabled(False)
             self.progress.reset()
             self._show_error("Cannot open video", err)
 
         worker = Worker(_do_load)
         worker.signals.finished.connect(_on_loaded)
         worker.signals.error.connect(_on_load_error)
+        self._current_worker = worker
+        self.task_queue.submit(worker)
+
+    def _ensure_ffmpeg_background(self):
+        """Download FFmpeg in background if not present (non-blocking)."""
+        import shutil
+
+        from core.video_io import _app_bin_dir
+
+        if shutil.which("ffmpeg"):
+            return
+        app_bin = _app_bin_dir()
+        if os.path.isfile(os.path.join(app_bin, "ffmpeg.exe")):
+            return
+
+        log.info("Scheduling FFmpeg background download…")
+
+        def _dl(progress_callback=None, cancel_flag=None):
+            from core.video_io import _auto_download_ffmpeg
+
+            return _auto_download_ffmpeg(app_bin)
+
+        worker = Worker(_dl)
+        worker.signals.progress.connect(self.progress.update_progress)
+        worker.signals.finished.connect(
+            lambda r: log.info("FFmpeg ready: %s", r)
+        )
+        worker.signals.error.connect(
+            lambda e: log.warning("FFmpeg download failed: %s", e)
+        )
         self.task_queue.submit(worker)
 
     # ── Point tracking ───────────────────────────────────
