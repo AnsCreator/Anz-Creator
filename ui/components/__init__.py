@@ -65,6 +65,7 @@ class VideoPreview(QLabel):
         )
         self.setText("No video loaded")
         self._pixmap: Optional[QPixmap] = None
+        self._fitting = False  # guard against infinite recursion
 
     def set_pixmap_direct(self, pixmap: QPixmap):
         """Set pixmap directly. This is the ONLY way to set the preview."""
@@ -85,6 +86,9 @@ class VideoPreview(QLabel):
             pass
 
     def _fit(self):
+        if self._fitting:
+            return  # prevent setPixmap → resizeEvent → _fit → setPixmap loop
+        self._fitting = True
         try:
             if self._pixmap is None or self._pixmap.isNull():
                 return
@@ -101,12 +105,11 @@ class VideoPreview(QLabel):
                 self.setPixmap(scaled)
         except Exception:
             pass
+        finally:
+            self._fitting = False
 
     def resizeEvent(self, event):
-        try:
-            self._fit()
-        except Exception:
-            pass
+        self._fit()
         super().resizeEvent(event)
 
 
