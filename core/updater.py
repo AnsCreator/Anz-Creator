@@ -177,25 +177,41 @@ def apply_update(zip_path: str) -> str:
     update_dir = os.path.dirname(zip_path)
     batch_path = os.path.join(update_dir, "update.bat")
 
-    batch_content = f"""@echo off
-echo Anz-Creator Updater
-echo Waiting for application to close...
-timeout /t 3 /nobreak > nul
+    batch_content = '@echo off\r\n'
+    batch_content += 'echo Anz-Creator Updater\r\n'
+    batch_content += 'echo Waiting for application to close...\r\n'
+    batch_content += 'timeout /t 5 /nobreak > nul\r\n'
+    batch_content += 'echo.\r\n'
+    batch_content += 'echo Extracting update...\r\n'
+    batch_content += (
+        'powershell -Command "'
+        "Expand-Archive -Path '"
+        + zip_path.replace("'", "''")
+        + "' -DestinationPath '"
+        + app_dir.replace("'", "''")
+        + "' -Force"
+        + '"\r\n'
+    )
+    batch_content += 'echo.\r\n'
+    batch_content += 'echo Cleaning up...\r\n'
+    batch_content += 'del "' + zip_path + '" 2>nul\r\n'
+    batch_content += 'echo.\r\n'
+    batch_content += 'echo Starting Anz-Creator...\r\n'
+    if getattr(sys, "frozen", False):
+        batch_content += 'start "" "' + app_exe + '"\r\n'
+    else:
+        batch_content += (
+            'start "" "'
+            + sys.executable
+            + '" "'
+            + os.path.join(app_dir, "main.py")
+            + '"\r\n'
+        )
+    batch_content += 'echo Update complete!\r\n'
+    batch_content += 'del "%~f0" 2>nul\r\n'
+    batch_content += 'exit\r\n'
 
-echo Extracting update...
-powershell -Command "Expand-Archive -Path '{zip_path}' -DestinationPath '{app_dir}' -Force"
-
-echo Cleaning up...
-del "{zip_path}" 2>nul
-
-echo Starting Anz-Creator...
-start "" {app_exe}
-
-echo Update complete!
-del "%~f0" 2>nul
-exit
-"""
-    with open(batch_path, "w") as f:
+    with open(batch_path, "w", encoding="utf-8") as f:
         f.write(batch_content)
 
     log.info("Update script created: %s", batch_path)
