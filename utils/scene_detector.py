@@ -35,20 +35,27 @@ def detect_scenes(
     if progress_callback:
         progress_callback(0, "Detecting scene cuts…")
 
-    video = open_video(video_path)
-    scene_mgr = SceneManager()
-    scene_mgr.add_detector(ContentDetector(threshold=threshold))
-    scene_mgr.detect_scenes(video)
+    try:
+        video = open_video(video_path)
+        scene_mgr = SceneManager()
+        scene_mgr.add_detector(ContentDetector(threshold=threshold))
+        scene_mgr.detect_scenes(video)
 
-    scene_list = scene_mgr.get_scene_list()
+        scene_list = scene_mgr.get_scene_list()
 
-    results = []
-    for start_time, end_time in scene_list:
-        s = int(start_time.get_frames())
-        e = int(end_time.get_frames())
-        results.append((s, e))
+        results = []
+        for start_time, end_time in scene_list:
+            s = int(start_time.get_frames())
+            e = int(end_time.get_frames())
+            results.append((s, e))
 
-    log.info("Detected %d scenes.", len(results))
-    if progress_callback:
-        progress_callback(100, f"Found {len(results)} scenes.")
-    return results
+        log.info("Detected %d scenes.", len(results))
+        if progress_callback:
+            progress_callback(100, f"Found {len(results)} scenes.")
+        return results
+
+    except Exception as exc:
+        log.warning("Scene detection failed: %s", exc)
+        if progress_callback:
+            progress_callback(100, "Scene detection failed, treating as single scene.")
+        return []
