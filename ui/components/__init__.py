@@ -131,10 +131,15 @@ class ClickableFrame(VideoPreview):
         )
 
     def set_frame(self, frame: np.ndarray):
-        h, w = frame.shape[:2]
-        self._original_size = (w, h)
-        self._points.clear()
-        super().set_frame(frame)
+        try:
+            if frame is None or frame.size == 0:
+                return
+            h, w = frame.shape[:2]
+            self._original_size = (w, h)
+            self._points.clear()
+            super().set_frame(frame)
+        except Exception:
+            pass
 
     def mousePressEvent(self, event: QMouseEvent):
         if self._pixmap and event.button() == Qt.MouseButton.LeftButton:
