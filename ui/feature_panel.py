@@ -492,4 +492,323 @@ class WatermarkRemovalPanel(QWidget):
                     self.progress.reset()
                     return
 
-                # Each widget gets its OWN copy of the pixmap
+                # Each widget gets its OWN copy of the pixmap (no sharing)
+                self.auto_preview.set_pixmap_direct(pixmap.copy())
+                self.click_frame._original_size = (w, h)
+                self.click_frame._points.clear()
+                self.click_frame.set_pixmap_direct(pixmap.copy())
+
+                self.auto_detect_btn.setEnabled(True)
+                self.manual_run_btn.setEnabled(True)
+                self.progress.reset()
+                log.info("Video displayed: %s", result["path"])
+
+                # Trigger FFmpeg download in background for next time
+                if os.name == "nt":
+                    self._ensure_ffmpeg_background()
+
+            except Exception as exc:
+                import traceback
+
+                log.error("Display failed: %s\n%s", exc, traceback.format_exc())
+                self._show_error("Display Error", str(exc))
+
+        def _on_load_error(err):
+            self.cancel_btn.setEnabled(False)
+            self.progress.reset()
+            self._show_error("Cannot open video", err)
+
+        worker = Worker(_do_load)
+        worker.signals.finished.connect(_on_loaded)
+        worker.signals.error.connect(_on_load_error)
+        self._current_worker = worker
+        self.task_queue.submit(worker)
+
+    def _ensure_ffmpeg_background(self):
+        """Download FFmpeg in background if not present (non-blocking)."""
+        import shutil
+
+        from core.video_io import _app_bin_dir
+
+        if shutil.which("ffmpeg"):
+            return
+        app_bin = _app_bin_dir()
+        if os.path.isfile(os.path.join(app_bin, "ffmpeg.exe")):
+            return
+
+        log.info("Scheduling FFmpeg background download…")
+
+        def _dl(progress_callback=None, cancel_flag=None):
+            from core.video_io import _auto_download_ffmpeg
+
+            return _auto_download_ffmpeg(app_bin)
+
+        worker = Worker(_dl)
+        worker.signals.progress.connect(self.progress.update_progress)
+        worker.signals.finished.connect(
+            lambda r: log.info("FFmpeg ready: %s", r)
+        )
+        worker.signals.error.connect(
+            lambda e: log.warning("FFmpeg download failed: %s", e)
+        )
+        self.task_queue.submit(worker)
+
+    # ── Point tracking ───────────────────────────────────
+    def _on_point_added(self, x: int, y: int):
+        n = len(self.click_frame.points)
+        self.points_label.setText(f"Points: {n}")
+
+    # ── Auto run ─────────────────────────────────────────
+    def _on_auto_run(self):
+        if not self._video_path:
+            return
+        self._run_pipeline("auto")
+
+    # ── Manual run ───────────────────────────────────────
+    def _on_manual_run(self):
+        if not self._video_path:
+            return
+        pts = self.click_frame.points
+        if not pts:
+            QMessageBox.warning(self, "No Points", "Click on the watermark first.")
+            return
+        self._run_pipeline("manual", click_points=pts)
+
+    # ── Pipeline runner ──────────────────────────────────
+    def _run_pipeline(self, mode: str, click_points=None):
+        settings = self.settings
+        yolo_var = settings.get("models.yolov8")
+        sam2_var = settings.get("models.sam2")
+        pp_mode = settings.get("models.propainter") or "standard"
+
+        yolo_path = self.model_mgr.model_path("yolov8", yolo_var)
+        sam2_path = self.model_mgr.model_path("sam2", sam2_var)
+        pp_dir = os.path.join(
+            os.environ.get("APPDATA", os.path.expanduser("~")),
+            "Anz-Creator", "models", "propainter",
+        )
+
+        # Check models exist
+        missing = []
+        if mode == "auto" and not os.path.isfile(yolo_path):
+            missing.append(("yolov8", yolo_var))
+        if mode == "manual" and not os.path.isfile(sam2_path):
+            missing.append(("sam2", sam2_var))
+
+        if missing:
+            model_list = "\n".join(f"  • {f}/{v}" for f, v in missing)
+            reply = QMessageBox.question(
+                self, "Models Required",
+                f"Required model(s) not found:\n{model_list}\n\nDownload now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._download_models(missing, lambda: self._run_pipeline(mode, click_points))
+            return
+
+        output_dir = os.path.join("output")
+        os.makedirs(output_dir, exist_ok=True)
+        base = os.path.splitext(os.path.basename(self._video_path))[0]
+        output_path = os.path.join(output_dir, f"{base}_no_watermark.mp4")
+
+        pipeline = WatermarkRemovalPipeline(
+            yolo_model_path=yolo_path,
+            sam2_model_path=sam2_path,
+            propainter_model_dir=pp_dir,
+            propainter_mode=pp_mode,
+            temp_dir="temp",
+        )
+
+        self.auto_detect_btn.setEnabled(False)
+        self.manual_run_btn.setEnabled(False)
+        self.cancel_btn.setEnabled(True)
+        self.progress.reset()
+
+        def _work(progress_callback=None, cancel_flag=None):
+            if mode == "auto":
+                return pipeline.run_auto(
+                    self._video_path, output_path,
+                    progress_callback=progress_callback,
+                    cancel_flag=cancel_flag,
+                )
+            else:
+                return pipeline.run_manual(
+                    self._video_path, output_path,
+                    click_points=click_points,
+                    progress_callback=progress_callback,
+                    cancel_flag=cancel_flag,
+                )
+
+        worker = Worker(_work)
+        worker.signals.progress.connect(self.progress.update_progress)
+        worker.signals.finished.connect(lambda r: self._on_pipeline_done(r))
+        worker.signals.error.connect(lambda e: self._on_pipeline_error(e))
+        self._current_worker = worker
+        self.task_queue.submit(worker)
+
+    def _on_pipeline_done(self, result):
+        self.auto_detect_btn.setEnabled(True)
+        self.manual_run_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(False)
+        if result:
+            self.output_label.setText(
+                f"<span style='color:#66bb6a'>✓ Output saved:</span> {result}"
+            )
+            self.open_output_btn.setEnabled(True)
+            self._output_path = result
+        else:
+            self.output_label.setText("Pipeline cancelled or failed.")
+
+    def _on_pipeline_error(self, err):
+        self.auto_detect_btn.setEnabled(True)
+        self.manual_run_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(False)
+        self._show_error("Pipeline Error", err)
+
+    # ── Download models ──────────────────────────────────
+    def _download_models(self, models: list[tuple[str, str]], on_done=None):
+        dlg = ModelDownloadDialog(self)
+        dlg.show()
+
+        def _dl(progress_callback=None, cancel_flag=None):
+            for fam, var in models:
+                self.model_mgr.download(
+                    fam, var,
+                    progress_callback=progress_callback,
+                    cancel_flag=cancel_flag,
+                )
+            return True
+
+        worker = Worker(_dl)
+        worker.signals.progress.connect(dlg.update)
+        worker.signals.finished.connect(lambda _: (dlg.close(), on_done() if on_done else None))
+        worker.signals.error.connect(lambda e: (dlg.close(), self._show_error("Download Error", e)))
+        dlg.cancel_btn.clicked.connect(worker.cancel)
+        self.task_queue.submit(worker)
+
+    # ── Cancel ───────────────────────────────────────────
+    def _on_cancel(self):
+        if self._current_worker:
+            self._current_worker.cancel()
+            self.cancel_btn.setEnabled(False)
+            self.progress.update_progress(0, "Cancelling…")
+
+    # ── Output folder ────────────────────────────────────
+    def _open_output_folder(self):
+        path = self._output_path or "output"
+        folder = os.path.dirname(path) if os.path.isfile(path) else "output"
+        # FIX: Use cross-platform folder opening
+        if os.name == "nt":
+            os.startfile(os.path.abspath(folder))
+        else:
+            import subprocess
+            subprocess.Popen(["xdg-open", os.path.abspath(folder)])
+
+    # ── Helpers ──────────────────────────────────────────
+    def _show_error(self, title: str, msg: str):
+        QMessageBox.critical(self, title, str(msg))
+        self.progress.update_progress(0, f"Error: {str(msg)[:80]}")
+
+
+# ── Settings Panel ───────────────────────────────────────
+class SettingsPanel(QWidget):
+    """Application settings — model selection, paths, preferences."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.settings = Settings()
+        self.model_mgr = ModelManager()
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(16)
+
+        layout.addWidget(SectionHeader("🧠  AI Model Settings"))
+
+        # YOLOv8
+        layout.addWidget(self._model_group(
+            "YOLOv8 (Auto Detection)", "yolov8",
+        ))
+
+        # SAM2
+        layout.addWidget(self._model_group(
+            "SAM2 (Manual Segmentation)", "sam2",
+        ))
+
+        # ProPainter
+        layout.addWidget(self._model_group(
+            "ProPainter (Inpainting)", "propainter",
+        ))
+
+        layout.addWidget(SectionHeader("📂  Paths"))
+        models_dir = os.path.join(
+            os.environ.get("APPDATA", os.path.expanduser("~")),
+            "Anz-Creator", "models",
+        )
+        path_label = QLabel(f"Models stored in: <code>{models_dir}</code>")
+        path_label.setWordWrap(True)
+        path_label.setStyleSheet("color: #888; font-size: 12px;")
+        layout.addWidget(path_label)
+
+        layout.addStretch()
+
+    def _model_group(self, title: str, family: str) -> QGroupBox:
+        group = QGroupBox(title)
+        lay = QVBoxLayout(group)
+
+        combo = QComboBox()
+        variants = self.model_mgr.list_variants(family)
+        current = self.settings.get(f"models.{family}")
+
+        for v in variants:
+            size = f"{v['size_mb']}MB" if v["size_mb"] else f"{v['vram_gb']}GB VRAM"
+            status = " ✓" if v["downloaded"] else ""
+            label = f"{v['name']}  ({size}) — {v['description']}{status}"
+            combo.addItem(label, v["name"])
+            if v["name"] == current:
+                combo.setCurrentIndex(combo.count() - 1)
+
+        combo.currentIndexChanged.connect(
+            lambda idx, f=family, c=combo: self._on_model_changed(f, c.itemData(idx))
+        )
+        lay.addWidget(combo)
+        return group
+
+    def _on_model_changed(self, family: str, variant: str):
+        if variant is None:
+            return
+        self.settings.set(f"models.{family}", variant)
+        log.info("Model changed: %s → %s", family, variant)
+
+        if not self.model_mgr.is_downloaded(family, variant):
+            reply = QMessageBox.question(
+                self, "Download Model",
+                f"{variant} is not downloaded yet.\nDownload now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                dlg = ModelDownloadDialog(self)
+                dlg.show()
+
+                # FIX: Capture family and variant in closure properly
+                _fam = family
+                _var = variant
+
+                def _do_download(progress_callback=None, cancel_flag=None):
+                    return self.model_mgr.download(
+                        _fam, _var,
+                        progress_callback=progress_callback,
+                        cancel_flag=cancel_flag,
+                    )
+
+                worker = Worker(_do_download)
+                worker.signals.progress.connect(dlg.update)
+                worker.signals.finished.connect(lambda _: dlg.close())
+                worker.signals.error.connect(lambda e: (
+                    dlg.close(),
+                    QMessageBox.critical(self, "Error", str(e)),
+                ))
+                dlg.cancel_btn.clicked.connect(worker.cancel)
+                TaskQueue().submit(worker)
