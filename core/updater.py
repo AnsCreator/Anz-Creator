@@ -24,7 +24,7 @@ def get_current_version() -> str:
     """Read current version from version.txt or return default."""
     if os.path.isfile(VERSION_FILE):
         try:
-            with open(VERSION_FILE, "r") as f:
+            with open(VERSION_FILE, "r", encoding="utf-8") as f:
                 return f.read().strip()
         except Exception:
             pass
@@ -43,7 +43,7 @@ def _parse_version(tag: str) -> tuple[int, ...]:
     # Pad to 4 parts
     while len(parts) < 4:
         parts.append(0)
-    return tuple(parts)
+    return tuple(parts[:4])  # FIX: Limit to 4 parts max
 
 
 def check_for_update() -> Optional[dict]:
@@ -95,8 +95,11 @@ def check_for_update() -> Optional[dict]:
             "body": body,
         }
 
-    except Exception as exc:
-        log.warning("Update check failed: %s", exc)
+    except requests.exceptions.RequestException as exc:
+        log.warning("Update check failed (network): %s", exc)
+        return None
+    except (ValueError, KeyError) as exc:
+        log.warning("Update check failed (parse): %s", exc)
         return None
 
 
@@ -148,7 +151,10 @@ def download_update(
     except Exception as exc:
         log.error("Update download failed: %s", exc)
         if os.path.exists(dest):
-            os.remove(dest)
+            try:
+                os.remove(dest)
+            except OSError:
+                pass
         raise
 
 

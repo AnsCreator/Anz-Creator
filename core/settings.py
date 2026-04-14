@@ -43,9 +43,10 @@ class Settings:
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._data = {}
-            cls._instance._load()
+            inst = super().__new__(cls)
+            inst._data = {}  # FIX: Initialize _data BEFORE _load
+            inst._load()
+            cls._instance = inst
         return cls._instance
 
     # ── I/O ──────────────────────────────────────────────
@@ -54,7 +55,8 @@ class Settings:
         if os.path.isfile(_SETTINGS_FILE):
             try:
                 with open(_SETTINGS_FILE, "r", encoding="utf-8") as f:
-                    self._data = yaml.safe_load(f) or {}
+                    loaded = yaml.safe_load(f)
+                    self._data = loaded if isinstance(loaded, dict) else {}
                 log.info("Settings loaded from %s", _SETTINGS_FILE)
             except Exception as exc:
                 log.warning("Failed to read settings, using defaults: %s", exc)
@@ -94,6 +96,11 @@ class Settings:
     @property
     def data(self) -> dict:
         return self._data
+
+    @classmethod
+    def reset_instance(cls):
+        """Reset singleton (useful for testing)."""
+        cls._instance = None
 
 
 def _deep_merge(base: dict, override: dict) -> dict:

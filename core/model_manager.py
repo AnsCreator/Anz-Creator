@@ -27,8 +27,12 @@ class ModelManager:
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                 "config.yaml",
             )
-        with open(config_path, "r", encoding="utf-8") as f:
-            self._cfg = yaml.safe_load(f)
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                self._cfg = yaml.safe_load(f) or {}
+        except Exception as exc:
+            log.error("Failed to load config: %s", exc)
+            self._cfg = {}
         Path(MODELS_ROOT).mkdir(parents=True, exist_ok=True)
         log.info("ModelManager — root: %s", MODELS_ROOT)
 
@@ -39,25 +43,32 @@ class ModelManager:
         return os.path.join(MODELS_ROOT, family, f"{variant}{ext}")
 
     def is_downloaded(self, family: str, variant: str) -> bool:
-        return os.path.isfile(self.model_path(family, variant))
+        path = self.model_path(family, variant)
+        # FIX: Also check file is not empty (corrupt download)
+        return os.path.isfile(path) and os.path.getsize(path) > 0
 
     def get_url(self, family: str, variant: str) -> Optional[str]:
         try:
             return self._cfg["models"][family]["options"][variant].get("url")
-        except KeyError:
+        except (KeyError, TypeError):
             return None
 
     def get_size_mb(self, family: str, variant: str) -> int:
         try:
             return self._cfg["models"][family]["options"][variant].get("size_mb", 0)
-        except KeyError:
+        except (KeyError, TypeError):
             return 0
 
     def list_variants(self, family: str) -> list[dict]:
         """Return list of {name, description, size_mb, downloaded}."""
-        opts = self._cfg["models"].get(family, {}).get("options", {})
+        try:
+            opts = self._cfg["models"].get(family, {}).get("options", {})
+        except (AttributeError, TypeError):
+            return []
         out = []
         for name, info in opts.items():
+            if not isinstance(info, dict):
+                continue
             out.append({
                 "name": name,
                 "description": info.get("description", ""),
@@ -68,7 +79,10 @@ class ModelManager:
         return out
 
     def default_variant(self, family: str) -> str:
-        return self._cfg["models"].get(family, {}).get("default", "")
+        try:
+            return self._cfg["models"].get(family, {}).get("default", "")
+        except (AttributeError, TypeError):
+            return ""
 
     def download(
         self,
@@ -82,7 +96,7 @@ class ModelManager:
         progress_callback(percent, message)
         """
         dest = self.model_path(family, variant)
-        if os.path.isfile(dest):
+        if self.is_downloaded(family, variant):
             log.info("Model already cached: %s", dest)
             return dest
 
@@ -108,7 +122,9 @@ class ModelManager:
                 for chunk in resp.iter_content(chunk_size=1024 * 256):
                     if cancel_flag and cancel_flag():
                         log.info("Download cancelled: %s", variant)
-                        os.remove(tmp)
+                        f.close()
+                        if os.path.exists(tmp):
+                            os.remove(tmp)
                         return ""
                     f.write(chunk)
                     downloaded += len(chunk)
@@ -127,7 +143,10 @@ class ModelManager:
 
         except Exception as exc:
             if os.path.exists(tmp):
-                os.remove(tmp)
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
             log.error("Download failed: %s", exc)
             raise
 

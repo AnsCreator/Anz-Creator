@@ -77,14 +77,15 @@ class TaskQueue:
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._pool = QThreadPool.globalInstance()
-            cls._instance._pool.setMaxThreadCount(4)
-            cls._instance._active: list[Worker] = []
+            inst = super().__new__(cls)
+            inst._pool = QThreadPool.globalInstance()
+            inst._pool.setMaxThreadCount(4)
+            inst._active: list[Worker] = []
             log.info(
                 "TaskQueue ready — max threads: %d",
-                cls._instance._pool.maxThreadCount(),
+                inst._pool.maxThreadCount(),
             )
+            cls._instance = inst
         return cls._instance
 
     def submit(self, worker: Worker) -> Worker:
@@ -94,17 +95,22 @@ class TaskQueue:
         worker.signals.error.connect(lambda _: self._cleanup(worker))
         worker.signals.cancelled.connect(lambda: self._cleanup(worker))
         self._pool.start(worker)
-        log.debug("Task submitted: %s", worker.fn.__name__)
+        # FIX: Safe attribute access for fn name
+        fn_name = getattr(worker.fn, "__name__", repr(worker.fn))
+        log.debug("Task submitted: %s", fn_name)
         return worker
 
     def cancel_all(self):
-        for w in self._active:
+        for w in list(self._active):  # FIX: Iterate copy to avoid mutation issues
             w.cancel()
         log.info("All tasks cancelled.")
 
     def _cleanup(self, worker: Worker):
-        if worker in self._active:
-            self._active.remove(worker)
+        try:
+            if worker in self._active:
+                self._active.remove(worker)
+        except ValueError:
+            pass  # Already removed
 
     @property
     def active_count(self) -> int:

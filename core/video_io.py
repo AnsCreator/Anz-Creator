@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from typing import Generator
@@ -49,8 +50,6 @@ def _app_bin_dir() -> str:
 
 def _find_ffprobe() -> str:
     """Find ffprobe executable, auto-downloads if needed."""
-    import shutil
-
     found = shutil.which("ffprobe")
     if found:
         return found
@@ -70,8 +69,6 @@ def _find_ffprobe() -> str:
 
 def _find_ffmpeg() -> str:
     """Find ffmpeg executable, auto-downloads if needed."""
-    import shutil
-
     found = shutil.which("ffmpeg")
     if found:
         return found
@@ -92,6 +89,8 @@ def _auto_download_ffmpeg(app_bin: str) -> str:
     Downloads to disk, extracts ffmpeg.exe + ffprobe.exe to app_bin.
     Returns path to ffmpeg.exe.
     """
+    import zipfile
+
     import requests
 
     # BtbN builds are smaller and faster than gyan.dev
@@ -156,17 +155,14 @@ def _auto_download_ffmpeg(app_bin: str) -> str:
 
     # Extract only the binaries we need
     try:
-        import zipfile
-
         with zipfile.ZipFile(zip_path) as zf:
             for member in zf.namelist():
                 basename = os.path.basename(member)
                 if basename in ("ffmpeg.exe", "ffprobe.exe"):
                     target = os.path.join(app_bin, basename)
+                    # FIX: Use shutil (top-level import) instead of _shutil alias
                     with zf.open(member) as src, open(target, "wb") as dst:
-                        import shutil as _shutil
-
-                        _shutil.copyfileobj(src, dst)
+                        shutil.copyfileobj(src, dst)
                     log.info("Extracted: %s", target)
 
         # Clean up zip
@@ -295,14 +291,19 @@ def read_frame(path: str, frame_idx: int) -> np.ndarray:
 def iter_frames(path: str) -> Generator[tuple[int, np.ndarray], None, None]:
     """Yield (index, frame) tuples."""
     cap = cv2.VideoCapture(path)
+    if not cap.isOpened():
+        log.warning("Cannot open video for iteration: %s", path)
+        return
     idx = 0
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        yield idx, frame
-        idx += 1
-    cap.release()
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            yield idx, frame
+            idx += 1
+    finally:
+        cap.release()
 
 
 def _fourcc_to_str(code: int) -> str:

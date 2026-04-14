@@ -138,7 +138,10 @@ def _find_ytdlp() -> str:
         log.error("Failed to download yt-dlp: %s", exc)
         # Clean up partial file
         if os.path.exists(app_ytdlp + ".part"):
-            os.remove(app_ytdlp + ".part")
+            try:
+                os.remove(app_ytdlp + ".part")
+            except OSError:
+                pass
 
     raise FileNotFoundError(
         "yt-dlp not found and auto-download failed.\n"
@@ -179,19 +182,28 @@ class Downloader:
             "--no-playlist",
             url,
         ]
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=60,
-            creationflags=_subprocess_flags(), startupinfo=_startupinfo(),
-        )
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=60,
+                creationflags=_subprocess_flags(), startupinfo=_startupinfo(),
+                encoding="utf-8", errors="replace",
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("yt-dlp timed out fetching metadata. Try again.")
+
         if result.returncode != 0:
             stderr = result.stderr.strip()
             if "is not recognized" in stderr or "not found" in stderr:
                 raise RuntimeError(
                     "yt-dlp not found. Install with: pip install yt-dlp"
                 )
-            raise RuntimeError(f"yt-dlp error: {stderr}")
+            raise RuntimeError(f"yt-dlp error: {stderr[:500]}")
 
-        info = json.loads(result.stdout)
+        try:
+            info = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Failed to parse yt-dlp output: {exc}")
+
         meta = VideoMeta(
             url=url,
             title=info.get("title", "Unknown"),
@@ -256,12 +268,14 @@ class Downloader:
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=1,
             creationflags=_subprocess_flags(), startupinfo=_startupinfo(),
+            encoding="utf-8", errors="replace",
         )
 
         output_path = ""
         for line in proc.stdout:
             if cancel_flag and cancel_flag():
                 proc.kill()
+                proc.wait()
                 log.info("Download cancelled.")
                 return ""
 
@@ -287,13 +301,16 @@ class Downloader:
 
         # Fallback: find most recent .mp4 in output dir
         if not output_path or not os.path.isfile(output_path):
-            mp4_files = [f for f in os.listdir(output_dir) if f.endswith(".mp4")]
-            if mp4_files:
-                mp4_files.sort(
-                    key=lambda f: os.path.getmtime(os.path.join(output_dir, f)),
-                    reverse=True,
-                )
-                output_path = os.path.join(output_dir, mp4_files[0])
+            try:
+                mp4_files = [f for f in os.listdir(output_dir) if f.endswith(".mp4")]
+                if mp4_files:
+                    mp4_files.sort(
+                        key=lambda f: os.path.getmtime(os.path.join(output_dir, f)),
+                        reverse=True,
+                    )
+                    output_path = os.path.join(output_dir, mp4_files[0])
+            except OSError as exc:
+                log.warning("Error listing output dir: %s", exc)
 
         if not output_path or not os.path.isfile(output_path):
             raise RuntimeError("Download completed but output file not found.")
