@@ -114,7 +114,7 @@ def _global_exception_handler(exc_type, exc_value, exc_tb):
 
         from PyQt6.QtWidgets import QApplication, QMessageBox
         app_inst = QApplication.instance()
-        
+
         if app_inst is not None and QThread.currentThread() == app_inst.thread():
             msg = QMessageBox()
             msg.setIcon(QMessageBox.Icon.Critical)
