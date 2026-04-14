@@ -171,5 +171,16 @@ if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support()
 
+    # Enable faulthandler to catch C-level segfaults
+    import faulthandler
+    _crash_log = os.path.join(
+        os.environ.get("APPDATA", os.path.expanduser("~")),
+        "Anz-Creator", "logs", "crash_dump.log",
+    )
+    os.makedirs(os.path.dirname(_crash_log), exist_ok=True)
+    _crash_file = open(_crash_log, "a")
+    _crash_file.write(f"\n\n=== Session started ===\n")
+    faulthandler.enable(file=_crash_file, all_threads=True)
+
     sys.excepthook = _global_exception_handler
     main()
