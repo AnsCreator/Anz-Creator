@@ -51,6 +51,11 @@ class SAM2Segmentor:
             self._predictor = SAM2ImagePredictor(sam2_model)
             self._video_predictor = SAM2VideoPredictor(sam2_model)
             log.info("SAM2 loaded successfully.")
+        except ImportError:
+            raise RuntimeError(
+                "SAM2 is not installed. Please install it from:\n"
+                "  pip install git+https://github.com/facebookresearch/segment-anything-2.git"
+            )
         except Exception as exc:
             log.error("Failed to load SAM2: %s", exc)
             raise
@@ -70,8 +75,17 @@ class SAM2Segmentor:
         """
         self._load_model()
 
+        if not click_points:
+            raise ValueError("At least one click point is required.")
+
         if click_labels is None:
             click_labels = [1] * len(click_points)
+
+        if len(click_labels) != len(click_points):
+            raise ValueError(
+                f"click_points ({len(click_points)}) and "
+                f"click_labels ({len(click_labels)}) must have same length."
+            )
 
         self._predictor.set_image(frame)
 
@@ -118,6 +132,11 @@ class SAM2Segmentor:
             f for f in os.listdir(frames_dir) if f.endswith(".png")
         ])
         total = len(frame_files)
+
+        if total == 0:
+            log.warning("No frames found in %s", frames_dir)
+            return masks_dir
+
         log.info("Propagating masks across %d frames…", total)
 
         if progress_callback:
@@ -127,31 +146,48 @@ class SAM2Segmentor:
         state = self._video_predictor.init_state(video_path=frames_dir)
 
         # Add initial mask at frame 0
+        mask_tensor = torch.from_numpy(
+            initial_mask.astype(np.float32) / 255.0
+        ).to(self.device)
+
         _, _, _ = self._video_predictor.add_new_mask(
             inference_state=state,
             frame_idx=0,
             obj_id=1,
-            mask=torch.from_numpy(initial_mask.astype(np.float32) / 255.0).to(self.device),
+            mask=mask_tensor,
         )
 
         # Re-init at scene cuts if provided
-        if scene_cuts:
+        if scene_cuts and click_points:
             for sc_frame in scene_cuts:
-                if sc_frame < total:
-                    frame = cv2.imread(os.path.join(frames_dir, frame_files[sc_frame]))
-                    if click_points:
-                        re_mask = self.segment_frame(frame, click_points)
-                        self._video_predictor.add_new_mask(
-                            inference_state=state,
-                            frame_idx=sc_frame,
-                            obj_id=1,
-                            mask=torch.from_numpy(re_mask.astype(np.float32) / 255.0).to(self.device),
-                        )
+                if 0 < sc_frame < total:  # FIX: Skip frame 0 (already initialized)
+                    frame_path = os.path.join(frames_dir, frame_files[sc_frame])
+                    frame = cv2.imread(frame_path)
+                    if frame is not None:
+                        try:
+                            re_mask = self.segment_frame(frame, click_points)
+                            re_mask_tensor = torch.from_numpy(
+                                re_mask.astype(np.float32) / 255.0
+                            ).to(self.device)
+                            self._video_predictor.add_new_mask(
+                                inference_state=state,
+                                frame_idx=sc_frame,
+                                obj_id=1,
+                                mask=re_mask_tensor,
+                            )
+                        except Exception as exc:
+                            log.warning(
+                                "Re-init at scene cut %d failed: %s",
+                                sc_frame, exc,
+                            )
 
         # Propagate
         for frame_idx, obj_ids, masks in self._video_predictor.propagate_in_video(state):
             if cancel_flag and cancel_flag():
                 return masks_dir
+
+            if frame_idx >= total:
+                break
 
             mask_np = (masks[0].cpu().numpy().squeeze() > 0.5).astype(np.uint8) * 255
             mask_path = os.path.join(masks_dir, frame_files[frame_idx])

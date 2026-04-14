@@ -33,6 +33,9 @@ class WatermarkDetector:
             from ultralytics import YOLO
             self._model = YOLO(self.model_path)
             log.info("YOLOv8 model loaded: %s", self.model_path)
+        except ImportError:
+            log.error("ultralytics package not installed. Install with: pip install ultralytics")
+            raise
         except Exception as exc:
             log.error("Failed to load YOLOv8: %s", exc)
             raise
@@ -56,6 +59,11 @@ class WatermarkDetector:
             f for f in os.listdir(frames_dir) if f.endswith(".png")
         ])
         total = len(frame_files)
+
+        if total == 0:
+            log.warning("No frames found in %s", frames_dir)
+            return masks_dir
+
         log.info("Detecting watermarks in %d frames…", total)
 
         for i, fname in enumerate(frame_files):
@@ -64,6 +72,14 @@ class WatermarkDetector:
 
             frame_path = os.path.join(frames_dir, fname)
             frame = cv2.imread(frame_path)
+
+            if frame is None:
+                log.warning("Cannot read frame: %s, generating empty mask", fname)
+                # Create empty mask with default size
+                mask = np.zeros((480, 640), dtype=np.uint8)
+                cv2.imwrite(os.path.join(masks_dir, fname), mask)
+                continue
+
             h, w = frame.shape[:2]
 
             # Run YOLOv8
@@ -100,20 +116,24 @@ class WatermarkDetector:
     # ── YOLOv8 detection ─────────────────────────────────
     def _yolo_detect(self, frame: np.ndarray) -> Optional[tuple[int, int, int, int]]:
         """Run YOLO and return (x1, y1, x2, y2) or None."""
-        results = self._model(frame, verbose=False)
-        if not results or len(results[0].boxes) == 0:
+        try:
+            results = self._model(frame, verbose=False)
+            if not results or len(results[0].boxes) == 0:
+                return None
+
+            # Pick highest confidence detection
+            boxes = results[0].boxes
+            confs = boxes.conf.cpu().numpy()
+            best_idx = confs.argmax()
+
+            if confs[best_idx] < self.confidence_threshold:
+                return None
+
+            xyxy = boxes.xyxy[best_idx].cpu().numpy().astype(int)
+            return tuple(xyxy)
+        except Exception as exc:
+            log.warning("YOLO detection failed on frame: %s", exc)
             return None
-
-        # Pick highest confidence detection
-        boxes = results[0].boxes
-        confs = boxes.conf.cpu().numpy()
-        best_idx = confs.argmax()
-
-        if confs[best_idx] < self.confidence_threshold:
-            return None
-
-        xyxy = boxes.xyxy[best_idx].cpu().numpy().astype(int)
-        return tuple(xyxy)
 
     # ── OpenCV fallback (frequency analysis) ─────────────
     @staticmethod
@@ -138,6 +158,10 @@ class WatermarkDetector:
 
         for name, (rx1, ry1, rx2, ry2) in regions:
             roi = gray[ry1:ry2, rx1:rx2]
+
+            # Skip empty ROIs
+            if roi.size == 0:
+                continue
 
             # Edge density as watermark indicator
             edges = cv2.Canny(roi, 100, 200)

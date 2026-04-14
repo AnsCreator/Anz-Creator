@@ -56,6 +56,9 @@ class ProPainterInpainter:
             # self._inpaint_model = load_inpaint_generator(model_dir)
 
             log.info("ProPainter loaded on %s", self._device)
+        except ImportError:
+            log.warning("PyTorch not available — using OpenCV fallback inpainting only.")
+            self._device = None
         except Exception as exc:
             log.error("Failed to load ProPainter: %s", exc)
             raise
@@ -80,24 +83,43 @@ class ProPainterInpainter:
         os.makedirs(output_dir, exist_ok=True)
 
         frame_files = sorted([f for f in os.listdir(frames_dir) if f.endswith(".png")])
-        mask_files = sorted([f for f in os.listdir(masks_dir) if f.endswith(".png")])
+        mask_files_set = set(os.listdir(masks_dir))  # FIX: Use set for O(1) lookup
         total = len(frame_files)
+
+        if total == 0:
+            log.warning("No frames found in %s", frames_dir)
+            return output_dir
 
         log.info("Inpainting %d frames (mode=%s)…", total, self.mode)
         if progress_callback:
             progress_callback(0, "Starting inpainting…")
 
-        # Load all frames and masks into tensors
+        # Load all frames and masks into memory
         frames = []
         masks = []
         for fname in frame_files:
             frame = cv2.imread(os.path.join(frames_dir, fname))
+            if frame is None:
+                log.warning("Cannot read frame: %s", fname)
+                # Create black placeholder frame
+                frame = np.zeros((480, 640, 3), dtype=np.uint8)
             frames.append(frame)
 
-            mname = fname if fname in mask_files else mask_files[0]
-            mask = cv2.imread(os.path.join(masks_dir, mname), cv2.IMREAD_GRAYSCALE)
+            # FIX: Match mask by filename, fall back to empty mask (not first mask)
+            if fname in mask_files_set:
+                mask = cv2.imread(os.path.join(masks_dir, fname), cv2.IMREAD_GRAYSCALE)
+            else:
+                mask = None
+
             if mask is None:
                 mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+            else:
+                # FIX: Ensure mask matches frame dimensions
+                fh, fw = frame.shape[:2]
+                mh, mw = mask.shape[:2]
+                if (mh, mw) != (fh, fw):
+                    mask = cv2.resize(mask, (fw, fh), interpolation=cv2.INTER_NEAREST)
+
             masks.append(mask)
 
         # Process in temporal windows for memory efficiency
@@ -164,6 +186,9 @@ class ProPainterInpainter:
             for j, ctx_frame in enumerate(context_frames):
                 if j == rel_idx:
                     continue
+                # FIX: Ensure context frame matches dimensions
+                if ctx_frame.shape[:2] != frame.shape[:2]:
+                    ctx_frame = cv2.resize(ctx_frame, (frame.shape[1], frame.shape[0]))
                 ctx_inp = cv2.inpaint(ctx_frame, mask_dilated, inpaintRadius=5, flags=cv2.INPAINT_NS)
                 dist = abs(j - rel_idx)
                 w = 1.0 / (dist + 1)
@@ -176,6 +201,6 @@ class ProPainterInpainter:
                 for w, n_frame in zip(weights, neighbor_inpainted):
                     blended += n_frame.astype(np.float64) * w
                 blended /= total_w
-                inpainted = blended.astype(np.uint8)
+                inpainted = np.clip(blended, 0, 255).astype(np.uint8)  # FIX: Clip to valid range
 
         return inpainted
