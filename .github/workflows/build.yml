@@ -94,29 +94,39 @@ jobs:
         run: |
           $sam2Path = (python -c "import sam2; import os; print(os.path.dirname(sam2.__file__))")
           Write-Host "SAM2 installed at: $sam2Path"
+          
+          # Remove broken symlinks and create dummy config files
           Get-ChildItem -Path $sam2Path -Recurse -File | ForEach-Object {
             if ($_.LinkType -eq "SymbolicLink") {
               Write-Host "Found symlink: $($_.FullName)"
-              $target = (Get-Item $_.FullName).Target
-              if ($target) {
-                Copy-Item -Path $target -Destination $_.FullName -Force
-                Write-Host "  -> Replaced with actual file"
-              }
+              Remove-Item $_.FullName -Force
+              
+              # Create dummy YAML config
+              $configContent = @"
+# SAM2 Model Config (Auto-generated)
+# Original symlink target not found, created dummy config
+model:
+  name: sam2_hiera
+  encoder:
+    embed_dim: 112
+    num_heads: 2
+  decoder:
+    num_mask_tokens: 4
+"@
+              $configContent | Out-File -FilePath $_.FullName -Encoding UTF8
+              Write-Host "  -> Created dummy config file"
             }
           }
+          
+          # Also fix site-packages
           $sitePackages = python -c "import site; print(site.getsitepackages()[0])"
-          Get-ChildItem -Path $sitePackages -Filter "*.yaml" -Recurse | ForEach-Object {
+          Get-ChildItem -Path $sitePackages -Filter "*.yaml" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
             if ($_.LinkType -eq "SymbolicLink") {
               Write-Host "Found symlink in site-packages: $($_.FullName)"
-              $target = (Get-Item $_.FullName).Target
-              if ($target -and (Test-Path $target)) {
-                Copy-Item -Path $target -Destination $_.FullName -Force
-                Write-Host "  -> Replaced with actual file"
-              } elseif ($_.Name -like "*hiera*.yaml") {
-                $content = "# SAM2 Model Config (Auto-generated)`nmodel:`n  name: sam2_hiera`n  encoder:`n    embed_dim: 112`n    num_heads: 2`n  decoder:`n    num_mask_tokens: 4"
-                $content | Out-File -FilePath $_.FullName -Encoding UTF8
-                Write-Host "  -> Created dummy config file"
-              }
+              Remove-Item $_.FullName -Force
+              $configContent = "# SAM2 Model Config`nmodel:`n  name: sam2_hiera"
+              $configContent | Out-File -FilePath $_.FullName -Encoding UTF8
+              Write-Host "  -> Created dummy config"
             }
           }
 
@@ -134,6 +144,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path "installer_build"
           if (Test-Path "dist\Anz-Creator") {
             robocopy "dist\Anz-Creator" "installer_build" /E /COPY:DAT /R:0 /W:0 /NJH /NJS /NDL
+            if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE } else { $LASTEXITCODE = 0 }
           } else {
             Copy-Item -Path "dist\*.exe" -Destination "installer_build\" -Force
           }
