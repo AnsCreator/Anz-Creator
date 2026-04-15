@@ -103,10 +103,11 @@ class SAM2Segmentor:
 
         while not sam2_imported:
             try:
+                # Test import only - don't store references yet
                 import torch  # noqa: F401
-                from sam2.build_sam import build_sam2
-                from sam2.sam2_image_predictor import SAM2ImagePredictor
-                from sam2.sam2_video_predictor import SAM2VideoPredictor
+                from sam2.build_sam import build_sam2  # noqa: F401
+                from sam2.sam2_image_predictor import SAM2ImagePredictor  # noqa: F401
+                from sam2.sam2_video_predictor import SAM2VideoPredictor  # noqa: F401
                 sam2_imported = True
             except ImportError:
                 if install_attempted:
@@ -148,6 +149,12 @@ class SAM2Segmentor:
 
         log.info("Loading SAM2 from %s on %s", self.model_path, self.device)
 
+        # Now do the actual imports for use
+        import torch
+        from sam2.build_sam import build_sam2
+        from sam2.sam2_image_predictor import SAM2ImagePredictor
+        from sam2.sam2_video_predictor import SAM2VideoPredictor
+
         # Use appropriate config based on model variant
         model_cfg = "sam2_hiera_b+.yaml"  # default for base+
         if "tiny" in self.model_path:
@@ -156,12 +163,6 @@ class SAM2Segmentor:
             model_cfg = "sam2_hiera_s.yaml"
         elif "large" in self.model_path:
             model_cfg = "sam2_hiera_l.yaml"
-
-        # Re-import after clearing cache
-        import torch
-        from sam2.build_sam import build_sam2
-        from sam2.sam2_image_predictor import SAM2ImagePredictor
-        from sam2.sam2_video_predictor import SAM2VideoPredictor
 
         try:
             sam2_model = build_sam2(
