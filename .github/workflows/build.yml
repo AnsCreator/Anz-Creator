@@ -72,11 +72,24 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install Git (required for SAM2)
+        run: choco install git -y
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
+
+      - name: Install SAM2 from GitHub
+        run: |
+          echo "Installing SAM2 from GitHub..."
+          pip install git+https://github.com/facebookresearch/segment-anything-2.git
+          echo "SAM2 installed successfully."
+
+      - name: Verify SAM2 installation
+        run: |
+          python -c "import sam2; print('SAM2 version:', sam2.__version__ if hasattr(sam2, '__version__') else 'installed')"
 
       - name: Install FFmpeg
         run: choco install ffmpeg -y
@@ -93,10 +106,8 @@ jobs:
           echo "Checking dist folder structure:"
           Get-ChildItem -Path dist -Recurse | Select-Object FullName
 
-      - name: Copy version file to dist (FIXED)
+      - name: Copy version file to dist
         run: |
-          # PyInstaller dengan spec file menghasilkan folder dist/Anz-Creator/
-          # atau single exe di dist/ tergantung konfigurasi
           if (Test-Path "dist\Anz-Creator") {
             Copy-Item version.txt "dist\Anz-Creator\"
             Write-Host "Copied version.txt to dist\Anz-Creator\"
@@ -112,7 +123,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path release
 
-      - name: Zip output (FIXED)
+      - name: Zip output
         run: |
           if (Test-Path "dist\Anz-Creator") {
             Compress-Archive -Path "dist\Anz-Creator\*" -DestinationPath "release\Anz-Creator-Windows.zip"
@@ -159,6 +170,7 @@ jobs:
             - ProPainter video inpainting
             - yt-dlp + FFmpeg auto-download on first run
             - PyQt6 dark material UI
+            - **SAM2 pre-installed** - No manual setup required!
 
             ### Requirements
             - Windows 10/11 64-bit
@@ -166,6 +178,7 @@ jobs:
 
             ### First run
             yt-dlp, FFmpeg, and AI models auto-download on first use.
+            SAM2 is already included in the executable.
           files: ./release/Anz-Creator-Windows.zip
           draft: false
           prerelease: false
