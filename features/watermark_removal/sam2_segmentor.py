@@ -6,6 +6,7 @@ Includes auto-install fallback with better error handling.
 
 from __future__ import annotations
 
+import importlib
 import os
 import shutil
 import subprocess
@@ -97,34 +98,53 @@ class SAM2Segmentor:
             return
 
         # Try import, auto-install if missing
-        try:
-            import torch  # noqa: F401
-            from sam2.build_sam import build_sam2
-            from sam2.sam2_image_predictor import SAM2ImagePredictor
-            from sam2.sam2_video_predictor import SAM2VideoPredictor
-        except ImportError:
-            log.warning("SAM2 not installed — attempting auto-install…")
-            success, error_msg = _pip_install_sam2()
+        sam2_imported = False
+        install_attempted = False
 
-            if not success:
-                error_detail = error_msg or "Auto-install failed"
-                raise RuntimeError(
-                    f"SAM2 is not installed and auto-install failed.\n\n"
-                    f"Error: {error_detail}\n\n"
-                    f"Please install manually:\n"
-                    f"1. Install Git from https://git-scm.com/\n"
-                    f"2. Run: pip install git+https://github.com/facebookresearch/segment-anything-2.git\n\n"
-                    f"Or clone and install:\n"
-                    f"  git clone https://github.com/facebookresearch/segment-anything-2.git\n"
-                    f"  cd segment-anything-2\n"
-                    f"  pip install -e ."
-                )
+        while not sam2_imported:
+            try:
+                import torch  # noqa: F401
+                from sam2.build_sam import build_sam2
+                from sam2.sam2_image_predictor import SAM2ImagePredictor
+                from sam2.sam2_video_predictor import SAM2VideoPredictor
+                sam2_imported = True
+            except ImportError:
+                if install_attempted:
+                    # Already tried install, still failing
+                    raise RuntimeError(
+                        "SAM2 installation succeeded but import still fails.\n"
+                        "This may be due to environment mismatch.\n\n"
+                        "Please restart the application or install manually:\n"
+                        "  pip install git+https://github.com/facebookresearch/segment-anything-2.git"
+                    )
 
-            # Retry import after successful install
-            import torch  # noqa: F401
-            from sam2.build_sam import build_sam2
-            from sam2.sam2_image_predictor import SAM2ImagePredictor
-            from sam2.sam2_video_predictor import SAM2VideoPredictor
+                log.warning("SAM2 not installed — attempting auto-install…")
+                success, error_msg = _pip_install_sam2()
+                install_attempted = True
+
+                if not success:
+                    error_detail = error_msg or "Auto-install failed"
+                    raise RuntimeError(
+                        f"SAM2 is not installed and auto-install failed.\n\n"
+                        f"Error: {error_detail}\n\n"
+                        f"Please install manually:\n"
+                        f"1. Install Git from https://git-scm.com/\n"
+                        f"2. Run: pip install git+https://github.com/facebookresearch/segment-anything-2.git\n\n"
+                        f"Or clone and install:\n"
+                        f"  git clone https://github.com/facebookresearch/segment-anything-2.git\n"
+                        f"  cd segment-anything-2\n"
+                        f"  pip install -e ."
+                    )
+
+                # Clear import cache and retry
+                log.info("SAM2 installed. Clearing import cache...")
+                modules_to_clear = [m for m in sys.modules if m.startswith('sam2')]
+                for m in modules_to_clear:
+                    del sys.modules[m]
+
+                # Also clear any cached finder/loader state
+                importlib.invalidate_caches()
+                log.info("Import cache cleared. Retrying import...")
 
         log.info("Loading SAM2 from %s on %s", self.model_path, self.device)
 
@@ -136,6 +156,12 @@ class SAM2Segmentor:
             model_cfg = "sam2_hiera_s.yaml"
         elif "large" in self.model_path:
             model_cfg = "sam2_hiera_l.yaml"
+
+        # Re-import after clearing cache
+        import torch
+        from sam2.build_sam import build_sam2
+        from sam2.sam2_image_predictor import SAM2ImagePredictor
+        from sam2.sam2_video_predictor import SAM2VideoPredictor
 
         try:
             sam2_model = build_sam2(
