@@ -28,7 +28,7 @@ class SAM2Segmentor:
 
     def __init__(self, model_path: str, device: str = "cuda"):
         self.model_path = model_path
-        self.device = device
+        self.device = device if torch.cuda.is_available() else "cpu"
         self._predictor = None
         self._video_predictor = None
 
@@ -38,25 +38,39 @@ class SAM2Segmentor:
 
         log.info("Loading SAM2 from %s on %s", self.model_path, self.device)
 
-        # Use appropriate config based on model variant
-        model_cfg = "sam2_hiera_b+.yaml"  # default for base+
-        if "tiny" in self.model_path:
-            model_cfg = "sam2_hiera_t.yaml"
-        elif "small" in self.model_path:
-            model_cfg = "sam2_hiera_s.yaml"
-        elif "large" in self.model_path:
-            model_cfg = "sam2_hiera_l.yaml"
+        # Tentukan model config berdasarkan nama file
+        model_cfg = self._detect_model_config()
 
         try:
+            # Gunakan strict=False untuk mengabaikan mismatch keys
             sam2_model = build_sam2(
-                model_cfg, self.model_path, device=self.device,
+                model_cfg,
+                self.model_path,
+                device=self.device,
+                strict=False,
             )
             self._predictor = SAM2ImagePredictor(sam2_model)
             self._video_predictor = SAM2VideoPredictor(sam2_model)
-            log.info("SAM2 loaded successfully.")
+            log.info("SAM2 loaded successfully (strict=False mode).")
         except Exception as exc:
             log.error("Failed to load SAM2 model: %s", exc)
             raise
+
+    def _detect_model_config(self) -> str:
+        """Detect appropriate model config based on file name."""
+        model_name = os.path.basename(self.model_path).lower()
+
+        if "tiny" in model_name:
+            return "sam2_hiera_t.yaml"
+        elif "small" in model_name:
+            return "sam2_hiera_s.yaml"
+        elif "base_plus" in model_name or "base+" in model_name:
+            return "sam2_hiera_b+.yaml"
+        elif "large" in model_name:
+            return "sam2_hiera_l.yaml"
+        else:
+            # Default to base+
+            return "sam2_hiera_b+.yaml"
 
     # ── Segment first frame from click points ────────────
     def segment_frame(
