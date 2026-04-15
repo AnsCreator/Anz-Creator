@@ -47,7 +47,7 @@ class SAM2Segmentor:
     def _load_model(self):
         if self._predictor is not None:
             return
-        
+
         # Try import, auto-install if missing
         try:
             import torch  # noqa: F401
@@ -69,7 +69,7 @@ class SAM2Segmentor:
             from sam2.sam2_video_predictor import SAM2VideoPredictor
 
         log.info("Loading SAM2 from %s on %s", self.model_path, self.device)
-        
+
         # Use appropriate config based on model variant
         model_cfg = "sam2_hiera_b+.yaml"  # default for base+
         if "tiny" in self.model_path:
