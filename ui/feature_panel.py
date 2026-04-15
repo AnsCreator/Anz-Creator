@@ -82,7 +82,9 @@ class WatermarkRemovalPanel(QWidget):
         url_lay = QVBoxLayout(url_tab)
         url_row = QHBoxLayout()
         self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("Paste video URL (YouTube, TikTok, Instagram, …)")
+        self.url_input.setPlaceholderText(
+            "Paste video URL (YouTube, TikTok, Instagram, …)"
+        )
         self.url_input.setMinimumHeight(36)
         url_row.addWidget(self.url_input)
         self.fetch_btn = QPushButton("Fetch Info")
@@ -165,7 +167,8 @@ class WatermarkRemovalPanel(QWidget):
         manual_lay = QVBoxLayout(manual_tab)
         manual_lay.addWidget(QLabel(
             "Click on the watermark in the frame below.\n"
-            "SAM2 will segment it with pixel-perfect accuracy and track across all frames."
+            "SAM2 will segment it with pixel-perfect accuracy "
+            "and track across all frames."
         ))
         self.click_frame = ClickableFrame()
         self.click_frame.setMinimumHeight(240)
@@ -234,14 +237,16 @@ class WatermarkRemovalPanel(QWidget):
         if not url:
             return
         self.fetch_btn.setEnabled(False)
-        self.meta_label.setText("Preparing yt-dlp… (may download on first use)")
+        self.meta_label.setText(
+            "Preparing yt-dlp… (may download on first use)"
+        )
 
         def _fetch(progress_callback=None, cancel_flag=None):
             return Downloader.fetch_metadata(url)
 
         worker = Worker(_fetch)
         worker.signals.finished.connect(self._on_meta_ready)
-        worker.signals.error.connect(lambda e: self._on_meta_error(e))
+        worker.signals.error.connect(self._on_meta_error)
         self.task_queue.submit(worker)
 
     def _on_meta_ready(self, meta: VideoMeta):
@@ -252,7 +257,10 @@ class WatermarkRemovalPanel(QWidget):
         self.quality_combo.setEnabled(True)
         self.download_btn.setEnabled(True)
 
-        dur = f"{meta.duration // 60}:{meta.duration % 60:02d}" if meta.duration else "?"
+        dur = (
+            f"{meta.duration // 60}:{meta.duration % 60:02d}"
+            if meta.duration else "?"
+        )
         self.meta_label.setText(
             f"<b>{meta.title}</b><br>"
             f"Platform: {meta.platform}  •  Duration: {dur}"
@@ -260,7 +268,9 @@ class WatermarkRemovalPanel(QWidget):
 
     def _on_meta_error(self, err: str):
         self.fetch_btn.setEnabled(True)
-        self.meta_label.setText(f"<span style='color:#ef5350'>Error: {err}</span>")
+        self.meta_label.setText(
+            f"<span style='color:#ef5350'>Error: {err}</span>"
+        )
 
     def _on_download_url(self):
         if not self._video_meta:
@@ -280,7 +290,9 @@ class WatermarkRemovalPanel(QWidget):
         worker = Worker(_dl)
         worker.signals.progress.connect(self.progress.update_progress)
         worker.signals.finished.connect(self._on_video_ready)
-        worker.signals.error.connect(lambda e: self._show_error("Download failed", e))
+        worker.signals.error.connect(
+            lambda e: self._show_error("Download failed", e)
+        )
         self._current_worker = worker
         self.cancel_btn.setEnabled(True)
         self.task_queue.submit(worker)
@@ -296,7 +308,7 @@ class WatermarkRemovalPanel(QWidget):
         self.cancel_btn.setEnabled(False)
 
     def _load_video_async(self, path: str):
-        """Load video in background thread to prevent UI freeze/crash."""
+        """Load video in background thread to prevent UI freeze."""
         if not os.path.isfile(path):
             self._show_error("File not found", f"Cannot find: {path}")
             return
@@ -376,7 +388,7 @@ class WatermarkRemovalPanel(QWidget):
                             )
                             log.info("Frame extracted via FFmpeg.")
             except Exception as exc:
-                log.warning("FFmpeg failed: %s", exc)
+                log.warning("FFmpeg frame extract failed: %s", exc)
 
             if cancel_flag and cancel_flag():
                 return None
@@ -398,14 +410,27 @@ class WatermarkRemovalPanel(QWidget):
                                 info.height = h
                             ch = bgr.shape[2] if bgr.ndim == 3 else 1
                             if ch == 4:
-                                frame = cv2.cvtColor(bgr, cv2.COLOR_BGRA2RGB)
+                                frame = cv2.cvtColor(
+                                    bgr, cv2.COLOR_BGRA2RGB,
+                                )
                             elif ch == 3:
-                                frame = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                                frame = cv2.cvtColor(
+                                    bgr, cv2.COLOR_BGR2RGB,
+                                )
                             else:
-                                frame = cv2.cvtColor(bgr, cv2.COLOR_GRAY2RGB)
-                            log.info("Frame extracted via OpenCV (%dx%d).", w, h)
+                                frame = cv2.cvtColor(
+                                    bgr, cv2.COLOR_GRAY2RGB,
+                                )
+                            log.info(
+                                "Frame extracted via OpenCV (%dx%d).", w, h,
+                            )
+                    else:
+                        cap.release()
                 except Exception as exc:
-                    log.warning("OpenCV failed: %s\n%s", exc, traceback.format_exc())
+                    log.warning(
+                        "OpenCV failed: %s\n%s",
+                        exc, traceback.format_exc(),
+                    )
 
             # 2c: Placeholder if everything failed
             if frame is None:
@@ -440,20 +465,33 @@ class WatermarkRemovalPanel(QWidget):
 
                 self.info_bar.setText(
                     f"<b>{os.path.basename(result['path'])}</b>  •  "
-                    f"{info.width}×{info.height}  •  {info.fps:.1f} fps  •  "
-                    f"{info.frame_count} frames  •  {info.duration:.1f}s"
+                    f"{info.width}×{info.height}  •  "
+                    f"{info.fps:.1f} fps  •  "
+                    f"{info.frame_count} frames  •  "
+                    f"{info.duration:.1f}s"
                 )
                 self.info_bar.show()
 
                 rgb = result["rgb"]
                 w, h = result["w"], result["h"]
 
-                qimg = QImage(rgb.data, w, h, w * 3, QImage.Format.Format_RGB888)
+                # Ensure contiguous array for QImage
+                if not rgb.flags["C_CONTIGUOUS"]:
+                    import numpy as np
+                    rgb = np.ascontiguousarray(rgb)
+
+                bytes_per_line = w * 3
+                qimg = QImage(
+                    rgb.data, w, h, bytes_per_line,
+                    QImage.Format.Format_RGB888,
+                )
                 pixmap = QPixmap.fromImage(qimg.copy())
                 del qimg
 
                 if pixmap.isNull():
-                    log.warning("Created pixmap is null, skipping display.")
+                    log.warning(
+                        "Created pixmap is null, skipping display."
+                    )
                     self.progress.reset()
                     return
 
@@ -473,7 +511,10 @@ class WatermarkRemovalPanel(QWidget):
 
             except Exception as exc:
                 import traceback
-                log.error("Display failed: %s\n%s", exc, traceback.format_exc())
+                log.error(
+                    "Display failed: %s\n%s",
+                    exc, traceback.format_exc(),
+                )
                 self._show_error("Display Error", str(exc))
 
         def _on_load_error(err):
@@ -488,7 +529,7 @@ class WatermarkRemovalPanel(QWidget):
         self.task_queue.submit(worker)
 
     def _ensure_ffmpeg_background(self):
-        """Download FFmpeg in background if not present (non-blocking)."""
+        """Download FFmpeg in background if not present."""
         import shutil
 
         from core.video_io import _app_bin_dir
@@ -531,7 +572,9 @@ class WatermarkRemovalPanel(QWidget):
             return
         pts = self.click_frame.points
         if not pts:
-            QMessageBox.warning(self, "No Points", "Click on the watermark first.")
+            QMessageBox.warning(
+                self, "No Points", "Click on the watermark first."
+            )
             return
         self._run_pipeline("manual", click_points=pts)
 
@@ -557,20 +600,31 @@ class WatermarkRemovalPanel(QWidget):
             missing.append(("sam2", sam2_var))
 
         if missing:
-            model_list = "\n".join(f"  • {f}/{v}" for f, v in missing)
+            model_list = "\n".join(
+                f"  • {f}/{v}" for f, v in missing
+            )
             reply = QMessageBox.question(
                 self, "Models Required",
-                f"Required model(s) not found:\n{model_list}\n\nDownload now?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                f"Required model(s) not found:\n{model_list}\n\n"
+                "Download now?",
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.Yes:
-                self._download_models(missing, lambda: self._run_pipeline(mode, click_points))
+                self._download_models(
+                    missing,
+                    lambda: self._run_pipeline(mode, click_points),
+                )
             return
 
-        output_dir = os.path.join("output")
+        output_dir = "output"
         os.makedirs(output_dir, exist_ok=True)
-        base = os.path.splitext(os.path.basename(self._video_path))[0]
-        output_path = os.path.join(output_dir, f"{base}_no_watermark.mp4")
+        base = os.path.splitext(
+            os.path.basename(self._video_path)
+        )[0]
+        output_path = os.path.join(
+            output_dir, f"{base}_no_watermark.mp4",
+        )
 
         pipeline = WatermarkRemovalPipeline(
             yolo_model_path=yolo_path,
@@ -585,8 +639,12 @@ class WatermarkRemovalPanel(QWidget):
         self.cancel_btn.setEnabled(True)
         self.progress.reset()
 
+        # Capture values for closure
+        _mode = mode
+        _click_points = click_points
+
         def _work(progress_callback=None, cancel_flag=None):
-            if mode == "auto":
+            if _mode == "auto":
                 return pipeline.run_auto(
                     self._video_path, output_path,
                     progress_callback=progress_callback,
@@ -595,15 +653,15 @@ class WatermarkRemovalPanel(QWidget):
             else:
                 return pipeline.run_manual(
                     self._video_path, output_path,
-                    click_points=click_points,
+                    click_points=_click_points,
                     progress_callback=progress_callback,
                     cancel_flag=cancel_flag,
                 )
 
         worker = Worker(_work)
         worker.signals.progress.connect(self.progress.update_progress)
-        worker.signals.finished.connect(lambda r: self._on_pipeline_done(r))
-        worker.signals.error.connect(lambda e: self._on_pipeline_error(e))
+        worker.signals.finished.connect(self._on_pipeline_done)
+        worker.signals.error.connect(self._on_pipeline_error)
         self._current_worker = worker
         self.task_queue.submit(worker)
 
@@ -613,7 +671,8 @@ class WatermarkRemovalPanel(QWidget):
         self.cancel_btn.setEnabled(False)
         if result:
             self.output_label.setText(
-                f"<span style='color:#66bb6a'>✓ Output saved:</span> {result}"
+                f"<span style='color:#66bb6a'>✓ Output saved:</span> "
+                f"{result}"
             )
             self.open_output_btn.setEnabled(True)
             self._output_path = result
@@ -627,12 +686,20 @@ class WatermarkRemovalPanel(QWidget):
         self._show_error("Pipeline Error", err)
 
     # ── Download models ──────────────────────────────────
-    def _download_models(self, models: list[tuple[str, str]], on_done=None):
+    def _download_models(
+        self,
+        models: list[tuple[str, str]],
+        on_done=None,
+    ):
         dlg = ModelDownloadDialog(self)
         dlg.show()
 
+        # Capture for closure
+        _models = list(models)
+        _on_done = on_done
+
         def _dl(progress_callback=None, cancel_flag=None):
-            for fam, var in models:
+            for fam, var in _models:
                 self.model_mgr.download(
                     fam, var,
                     progress_callback=progress_callback,
@@ -640,10 +707,19 @@ class WatermarkRemovalPanel(QWidget):
                 )
             return True
 
+        def _on_finished(_result):
+            dlg.close()
+            if _on_done:
+                _on_done()
+
+        def _on_error(e):
+            dlg.close()
+            self._show_error("Download Error", e)
+
         worker = Worker(_dl)
         worker.signals.progress.connect(dlg.update)
-        worker.signals.finished.connect(lambda _: (dlg.close(), on_done() if on_done else None))
-        worker.signals.error.connect(lambda e: (dlg.close(), self._show_error("Download Error", e)))
+        worker.signals.finished.connect(_on_finished)
+        worker.signals.error.connect(_on_error)
         dlg.cancel_btn.clicked.connect(worker.cancel)
         self.task_queue.submit(worker)
 
@@ -657,12 +733,18 @@ class WatermarkRemovalPanel(QWidget):
     # ── Output folder ────────────────────────────────────
     def _open_output_folder(self):
         path = self._output_path or "output"
-        folder = os.path.dirname(path) if os.path.isfile(path) else "output"
+        folder = (
+            os.path.dirname(path) if os.path.isfile(path) else "output"
+        )
+        abs_folder = os.path.abspath(folder)
         if os.name == "nt":
-            os.startfile(os.path.abspath(folder))
+            os.startfile(abs_folder)
         else:
-            import subprocess
-            subprocess.Popen(["xdg-open", os.path.abspath(folder)])
+            import subprocess as sp
+            try:
+                sp.Popen(["xdg-open", abs_folder])
+            except FileNotFoundError:
+                sp.Popen(["open", abs_folder])  # macOS
 
     # ── Helpers ──────────────────────────────────────────
     def _show_error(self, title: str, msg: str):
@@ -707,7 +789,9 @@ class SettingsPanel(QWidget):
             os.environ.get("APPDATA", os.path.expanduser("~")),
             "Anz-Creator", "models",
         )
-        path_label = QLabel(f"Models stored in: <code>{models_dir}</code>")
+        path_label = QLabel(
+            f"Models stored in: <code>{models_dir}</code>"
+        )
         path_label.setWordWrap(True)
         path_label.setStyleSheet("color: #888; font-size: 12px;")
         layout.addWidget(path_label)
@@ -723,15 +807,24 @@ class SettingsPanel(QWidget):
         current = self.settings.get(f"models.{family}")
 
         for v in variants:
-            size = f"{v['size_mb']}MB" if v["size_mb"] else f"{v['vram_gb']}GB VRAM"
+            size = (
+                f"{v['size_mb']}MB"
+                if v["size_mb"] else f"{v['vram_gb']}GB VRAM"
+            )
             status = " ✓" if v["downloaded"] else ""
-            label = f"{v['name']}  ({size}) — {v['description']}{status}"
+            label = (
+                f"{v['name']}  ({size}) — {v['description']}{status}"
+            )
             combo.addItem(label, v["name"])
             if v["name"] == current:
                 combo.setCurrentIndex(combo.count() - 1)
 
+        # Capture family for lambda
+        _family = family
         combo.currentIndexChanged.connect(
-            lambda idx, f=family, c=combo: self._on_model_changed(f, c.itemData(idx))
+            lambda idx, f=_family, c=combo: self._on_model_changed(
+                f, c.itemData(idx),
+            )
         )
         lay.addWidget(combo)
         return group
@@ -746,7 +839,8 @@ class SettingsPanel(QWidget):
             reply = QMessageBox.question(
                 self, "Download Model",
                 f"{variant} is not downloaded yet.\nDownload now?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.Yes:
                 dlg = ModelDownloadDialog(self)
@@ -755,7 +849,9 @@ class SettingsPanel(QWidget):
                 _fam = family
                 _var = variant
 
-                def _do_download(progress_callback=None, cancel_flag=None):
+                def _do_download(
+                    progress_callback=None, cancel_flag=None,
+                ):
                     return self.model_mgr.download(
                         _fam, _var,
                         progress_callback=progress_callback,
