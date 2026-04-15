@@ -90,26 +90,20 @@ jobs:
           cd ..
           echo "SAM2 installation complete."
 
-      - name: Fix SAM2 symbolic links (replace with actual files)
+      - name: Fix SAM2 symbolic links
         run: |
           $sam2Path = (python -c "import sam2; import os; print(os.path.dirname(sam2.__file__))")
           Write-Host "SAM2 installed at: $sam2Path"
-          
-          # Find all symbolic links (.yaml files that are symlinks)
           Get-ChildItem -Path $sam2Path -Recurse -File | ForEach-Object {
             if ($_.LinkType -eq "SymbolicLink") {
               Write-Host "Found symlink: $($_.FullName)"
               $target = (Get-Item $_.FullName).Target
               if ($target) {
-                Write-Host "  -> Target: $target"
-                # Copy actual file to replace symlink
                 Copy-Item -Path $target -Destination $_.FullName -Force
                 Write-Host "  -> Replaced with actual file"
               }
             }
           }
-          
-          # Also handle config files in site-packages
           $sitePackages = python -c "import site; print(site.getsitepackages()[0])"
           Get-ChildItem -Path $sitePackages -Filter "*.yaml" -Recurse | ForEach-Object {
             if ($_.LinkType -eq "SymbolicLink") {
@@ -119,17 +113,7 @@ jobs:
                 Copy-Item -Path $target -Destination $_.FullName -Force
                 Write-Host "  -> Replaced with actual file"
               } elseif ($_.Name -like "*hiera*.yaml") {
-                # Create dummy config file if target not found
-                $content = @"
-# SAM2 Model Config (Auto-generated)
-model:
-  name: sam2_hiera
-  encoder:
-    embed_dim: 112
-    num_heads: 2
-  decoder:
-    num_mask_tokens: 4
-"@
+                $content = "# SAM2 Model Config (Auto-generated)`nmodel:`n  name: sam2_hiera`n  encoder:`n    embed_dim: 112`n    num_heads: 2`n  decoder:`n    num_mask_tokens: 4"
                 $content | Out-File -FilePath $_.FullName -Encoding UTF8
                 Write-Host "  -> Created dummy config file"
               }
@@ -140,137 +124,81 @@ model:
         run: choco install ffmpeg -y --no-progress
 
       - name: Write version file
-        run: |
-          echo '${{ needs.version.outputs.new_tag }}' > version.txt
+        run: echo '${{ needs.version.outputs.new_tag }}' > version.txt
 
-      - name: Build with PyInstaller (--noconfirm, --onedir)
-        run: |
-          pyinstaller anz_creator.spec
-          Write-Host "PyInstaller build complete"
+      - name: Build with PyInstaller
+        run: pyinstaller anz_creator.spec
 
       - name: Prepare dist folder for NSIS
         run: |
-          echo "Preparing distribution folder..."
           New-Item -ItemType Directory -Force -Path "installer_build"
-          
           if (Test-Path "dist\Anz-Creator") {
-            # Use robocopy to avoid symlink issues
             robocopy "dist\Anz-Creator" "installer_build" /E /COPY:DAT /R:0 /W:0 /NJH /NJS /NDL
           } else {
             Copy-Item -Path "dist\*.exe" -Destination "installer_build\" -Force
           }
-          
           Copy-Item -Path "version.txt" -Destination "installer_build\" -Force
           Copy-Item -Path "config.yaml" -Destination "installer_build\" -Force
-          
-          Write-Host "Files copied to installer_build"
-          Get-ChildItem -Path "installer_build" | Select-Object Name, Length
 
       - name: Create NSIS Script
         run: |
           $version = "${{ needs.version.outputs.new_tag }}".TrimStart('v')
-          
-          $script = @'
-          ; Anz-Creator NSIS Installer Script
-          
-          ;--------------------------------
-          ; Includes
+          $script = @"
           !include "MUI2.nsh"
           !include "FileFunc.nsh"
-          
-          ;--------------------------------
-          ; General
           Name "Anz-Creator"
           OutFile "release\Anz-Creator-Setup.exe"
           Unicode True
-          InstallDir "$PROGRAMFILES64\Anz-Creator"
+          InstallDir `$PROGRAMFILES64\Anz-Creator`
           InstallDirRegKey HKLM "Software\Anz-Creator" "Install_Dir"
           RequestExecutionLevel admin
-          
-          ;--------------------------------
-          ; Interface Settings
           !define MUI_ABORTWARNING
-          
-          ;--------------------------------
-          ; Version Information
-          VIProductVersion "${VERSION}.0"
+          VIProductVersion "$version.0"
           VIAddVersionKey "ProductName" "Anz-Creator"
           VIAddVersionKey "CompanyName" "AnzCreator"
           VIAddVersionKey "FileDescription" "AI-powered Video Processing Toolkit"
-          VIAddVersionKey "FileVersion" "${VERSION}"
+          VIAddVersionKey "FileVersion" "$version"
           VIAddVersionKey "LegalCopyright" "AnzCreator"
-          
-          ;--------------------------------
-          ; Pages
           !insertmacro MUI_PAGE_WELCOME
           !insertmacro MUI_PAGE_DIRECTORY
           !insertmacro MUI_PAGE_INSTFILES
           !insertmacro MUI_PAGE_FINISH
-          
           !insertmacro MUI_UNPAGE_CONFIRM
           !insertmacro MUI_UNPAGE_INSTFILES
-          
-          ;--------------------------------
-          ; Languages
           !insertmacro MUI_LANGUAGE "English"
-          
-          ;--------------------------------
-          ; Installer Section
           Section "Install"
             SectionIn RO
-            SetOutPath "$INSTDIR"
-            
-            ; Write installation path
-            WriteRegStr HKLM "Software\Anz-Creator" "Install_Dir" "$INSTDIR"
+            SetOutPath `$INSTDIR`
+            WriteRegStr HKLM "Software\Anz-Creator" "Install_Dir" "`$INSTDIR"
             WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayName" "Anz-Creator"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "UninstallString" '"$INSTDIR\uninstall.exe"'
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayIcon" "$INSTDIR\Anz-Creator.exe"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayVersion" "${VERSION}"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "UninstallString" '"`$INSTDIR\uninstall.exe"'
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayIcon" "`$INSTDIR\Anz-Creator.exe"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayVersion" "$version"
             WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "Publisher" "AnzCreator"
             WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "NoModify" 1
             WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "NoRepair" 1
-            
-            ; Copy all files (use /r for recursive, skip symlinks)
             File /r /x "*.pyc" /x "__pycache__" "installer_build\*"
-            
-            ; Create uninstaller
-            WriteUninstaller "$INSTDIR\uninstall.exe"
-            
-            ; Create shortcuts
-            CreateDirectory "$SMPROGRAMS\Anz-Creator"
-            CreateShortcut "$SMPROGRAMS\Anz-Creator\Anz-Creator.lnk" "$INSTDIR\Anz-Creator.exe"
-            CreateShortcut "$SMPROGRAMS\Anz-Creator\Uninstall.lnk" "$INSTDIR\uninstall.exe"
-            CreateShortcut "$DESKTOP\Anz-Creator.lnk" "$INSTDIR\Anz-Creator.exe"
+            WriteUninstaller "`$INSTDIR\uninstall.exe"
+            CreateDirectory "`$SMPROGRAMS\Anz-Creator"
+            CreateShortcut "`$SMPROGRAMS\Anz-Creator\Anz-Creator.lnk" "`$INSTDIR\Anz-Creator.exe"
+            CreateShortcut "`$SMPROGRAMS\Anz-Creator\Uninstall.lnk" "`$INSTDIR\uninstall.exe"
+            CreateShortcut "`$DESKTOP\Anz-Creator.lnk" "`$INSTDIR\Anz-Creator.exe"
           SectionEnd
-          
-          ;--------------------------------
-          ; Uninstaller Section
           Section "Uninstall"
-            ; Remove shortcuts
-            Delete "$DESKTOP\Anz-Creator.lnk"
-            Delete "$SMPROGRAMS\Anz-Creator\*.lnk"
-            RMDir "$SMPROGRAMS\Anz-Creator"
-            
-            ; Remove files
-            RMDir /r "$INSTDIR"
-            
-            ; Remove registry keys
+            Delete "`$DESKTOP\Anz-Creator.lnk"
+            Delete "`$SMPROGRAMS\Anz-Creator\*.lnk"
+            RMDir "`$SMPROGRAMS\Anz-Creator"
+            RMDir /r "`$INSTDIR"
             DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator"
             DeleteRegKey HKLM "Software\Anz-Creator"
           SectionEnd
-          '@
-          
-          # Replace version placeholder
-          $script = $script -replace '\$\{VERSION\}', $version
-          
+          "@
           $script | Out-File -FilePath "setup.nsi" -Encoding ASCII
-          Write-Host "NSIS script created"
 
       - name: Build Installer with NSIS
         run: |
           New-Item -ItemType Directory -Force -Path release
           & "C:\Program Files (x86)\NSIS\makensis.exe" setup.nsi
-          Write-Host "Installer built:"
           Get-ChildItem -Path release | Select-Object Name, @{Name="Size(MB)";Expression={[math]::Round($_.Length/1MB,2)}}
 
       - name: Upload installer artifact
