@@ -1,7 +1,7 @@
 """
 SAM2 Segmentor — Manual mode for pixel-perfect watermark segmentation.
 User clicks on watermark → SAM2 segments + propagates across frames.
-Includes auto-install fallback.
+Includes auto-install fallback with better error handling.
 """
 
 from __future__ import annotations
@@ -17,17 +17,66 @@ import numpy as np
 from utils.logger import log
 
 
-def _pip_install_sam2() -> bool:
-    """Auto-install SAM2 package."""
-    try:
-        cmd = [sys.executable, "-m", "pip", "install", "-q",
-               "git+https://github.com/facebookresearch/segment-anything-2.git"]
-        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-        subprocess.check_call(cmd, creationflags=creationflags)
-        return True
-    except Exception as e:
-        log.error("SAM2 auto-install failed: %s", e)
-        return False
+def _pip_install_sam2() -> tuple[bool, str]:
+    """Auto-install SAM2 package. Returns (success, error_message)."""
+    log.info("Attempting to install SAM2 from GitHub...")
+    
+    # Multiple fallback installation methods
+    methods = [
+        # Method 1: Direct GitHub install
+        ["git+https://github.com/facebookresearch/segment-anything-2.git"],
+        # Method 2: With --no-cache-dir
+        ["--no-cache-dir", "git+https://github.com/facebookresearch/segment-anything-2.git"],
+        # Method 3: Clone then install (more reliable)
+        None,  # Special handling below
+    ]
+    
+    for i, method in enumerate(methods):
+        try:
+            if method is None:
+                # Method 3: Clone and install locally
+                log.info("Trying clone-and-install method...")
+                import tempfile
+                import shutil
+                
+                temp_dir = tempfile.mkdtemp(prefix="sam2_install_")
+                try:
+                    # Clone repository
+                    clone_cmd = ["git", "clone", "--depth", "1",
+                                 "https://github.com/facebookresearch/segment-anything-2.git",
+                                 temp_dir]
+                    creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+                    subprocess.check_call(clone_cmd, creationflags=creationflags)
+                    
+                    # Install from local clone
+                    install_cmd = [sys.executable, "-m", "pip", "install", "-q", temp_dir]
+                    subprocess.check_call(install_cmd, creationflags=creationflags)
+                    
+                    log.info("SAM2 installed successfully via clone method.")
+                    return True, ""
+                finally:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+            else:
+                cmd = [sys.executable, "-m", "pip", "install", "-q"] + method
+                creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+                log.info(f"Install attempt {i+1}: pip install {' '.join(method)}")
+                subprocess.check_call(cmd, creationflags=creationflags)
+                log.info("SAM2 installed successfully.")
+                return True, ""
+                
+        except subprocess.CalledProcessError as e:
+            log.warning(f"Install method {i+1} failed: {e}")
+            continue
+        except FileNotFoundError as e:
+            # Git not found
+            if "git" in str(e).lower():
+                return False, "Git is not installed. Please install Git from https://git-scm.com/"
+            continue
+        except Exception as e:
+            log.warning(f"Install method {i+1} failed: {e}")
+            continue
+    
+    return False, "All installation methods failed. Please install manually."
 
 
 class SAM2Segmentor:
@@ -56,13 +105,23 @@ class SAM2Segmentor:
             from sam2.sam2_video_predictor import SAM2VideoPredictor
         except ImportError:
             log.warning("SAM2 not installed — attempting auto-install…")
-            if not _pip_install_sam2():
+            success, error_msg = _pip_install_sam2()
+            
+            if not success:
+                error_detail = error_msg or "Auto-install failed"
                 raise RuntimeError(
-                    "SAM2 is not installed and auto-install failed.\n"
-                    "Please install manually:\n"
-                    "  pip install git+https://github.com/facebookresearch/segment-anything-2.git"
+                    f"SAM2 is not installed and auto-install failed.\n\n"
+                    f"Error: {error_detail}\n\n"
+                    f"Please install manually:\n"
+                    f"1. Install Git from https://git-scm.com/\n"
+                    f"2. Run: pip install git+https://github.com/facebookresearch/segment-anything-2.git\n\n"
+                    f"Or clone and install:\n"
+                    f"  git clone https://github.com/facebookresearch/segment-anything-2.git\n"
+                    f"  cd segment-anything-2\n"
+                    f"  pip install -e ."
                 )
-            # Retry import after install
+            
+            # Retry import after successful install
             import torch  # noqa: F401
             from sam2.build_sam import build_sam2
             from sam2.sam2_image_predictor import SAM2ImagePredictor
