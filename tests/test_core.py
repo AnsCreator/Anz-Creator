@@ -227,7 +227,9 @@ class TestWatermarkDetector:
         pytest.importorskip("cv2")
         if not _has_module("torch"):
             pytest.skip("torch not installed")
+
         import numpy as np
+
         from features.watermark_removal.detector import WatermarkDetector
 
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
