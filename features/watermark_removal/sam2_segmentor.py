@@ -42,15 +42,15 @@ def _get_python_executable() -> str:
 
 def _pip_install_sam2() -> tuple[bool, str]:
     """Auto-install SAM2 package. Returns (success, error_message)."""
-    
+
     if _is_frozen():
         log.warning("Running in PyInstaller bundle - cannot auto-install packages.")
         return False, "Running as compiled executable. Please install SAM2 manually."
-    
+
     log.info("Attempting to install SAM2 from GitHub...")
 
     python_exe = _get_python_executable()
-    
+
     # Multiple fallback installation methods
     methods = [
         # Method 1: Direct GitHub install
@@ -164,7 +164,7 @@ class SAM2Segmentor:
                     "SAM2 is not installed in your system Python environment.\n\n"
                     + _get_install_instructions()
                 )
-            
+
             # Not frozen - try auto-install
             log.warning("SAM2 not installed — attempting auto-install…")
             success, error_msg = _pip_install_sam2()
@@ -184,7 +184,7 @@ class SAM2Segmentor:
                 del sys.modules[m]
             importlib.invalidate_caches()
             log.info("Import cache cleared. Retrying import...")
-            
+
             # Check again after install
             if not _check_sam2_import():
                 raise RuntimeError(
