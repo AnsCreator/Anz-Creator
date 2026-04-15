@@ -700,7 +700,7 @@ class WatermarkRemovalPanel(QWidget):
         for i, (fam, var) in enumerate(_models):
             if fam == "sam2" and progress_callback:
                 progress_callback(10, "Installing SAM2 package (this may take 2-5 minutes)...")
-            
+
             self.model_mgr.download(
                 fam, var,
                 progress_callback=progress_callback,
