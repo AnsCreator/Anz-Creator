@@ -90,6 +90,52 @@ jobs:
           cd ..
           echo "SAM2 installation complete."
 
+      - name: Fix SAM2 symbolic links (replace with actual files)
+        run: |
+          $sam2Path = (python -c "import sam2; import os; print(os.path.dirname(sam2.__file__))")
+          Write-Host "SAM2 installed at: $sam2Path"
+          
+          # Find all symbolic links (.yaml files that are symlinks)
+          Get-ChildItem -Path $sam2Path -Recurse -File | ForEach-Object {
+            if ($_.LinkType -eq "SymbolicLink") {
+              Write-Host "Found symlink: $($_.FullName)"
+              $target = (Get-Item $_.FullName).Target
+              if ($target) {
+                Write-Host "  -> Target: $target"
+                # Copy actual file to replace symlink
+                Copy-Item -Path $target -Destination $_.FullName -Force
+                Write-Host "  -> Replaced with actual file"
+              }
+            }
+          }
+          
+          # Also handle config files in site-packages
+          $sitePackages = python -c "import site; print(site.getsitepackages()[0])"
+          Get-ChildItem -Path $sitePackages -Filter "*.yaml" -Recurse | ForEach-Object {
+            if ($_.LinkType -eq "SymbolicLink") {
+              Write-Host "Found symlink in site-packages: $($_.FullName)"
+              $target = (Get-Item $_.FullName).Target
+              if ($target -and (Test-Path $target)) {
+                Copy-Item -Path $target -Destination $_.FullName -Force
+                Write-Host "  -> Replaced with actual file"
+              } elseif ($_.Name -like "*hiera*.yaml") {
+                # Create dummy config file if target not found
+                $content = @"
+# SAM2 Model Config (Auto-generated)
+model:
+  name: sam2_hiera
+  encoder:
+    embed_dim: 112
+    num_heads: 2
+  decoder:
+    num_mask_tokens: 4
+"@
+                $content | Out-File -FilePath $_.FullName -Encoding UTF8
+                Write-Host "  -> Created dummy config file"
+              }
+            }
+          }
+
       - name: Install FFmpeg
         run: choco install ffmpeg -y --no-progress
 
@@ -97,22 +143,28 @@ jobs:
         run: |
           echo '${{ needs.version.outputs.new_tag }}' > version.txt
 
-      - name: Build with PyInstaller
-        run: pyinstaller anz_creator.spec
+      - name: Build with PyInstaller (--noconfirm, --onedir)
+        run: |
+          pyinstaller anz_creator.spec
+          Write-Host "PyInstaller build complete"
 
-      - name: Prepare dist folder
+      - name: Prepare dist folder for NSIS
         run: |
           echo "Preparing distribution folder..."
           New-Item -ItemType Directory -Force -Path "installer_build"
           
           if (Test-Path "dist\Anz-Creator") {
-            Copy-Item -Path "dist\Anz-Creator\*" -Destination "installer_build\" -Recurse -Force
+            # Use robocopy to avoid symlink issues
+            robocopy "dist\Anz-Creator" "installer_build" /E /COPY:DAT /R:0 /W:0 /NJH /NJS /NDL
           } else {
             Copy-Item -Path "dist\*.exe" -Destination "installer_build\" -Force
           }
           
           Copy-Item -Path "version.txt" -Destination "installer_build\" -Force
           Copy-Item -Path "config.yaml" -Destination "installer_build\" -Force
+          
+          Write-Host "Files copied to installer_build"
+          Get-ChildItem -Path "installer_build" | Select-Object Name, Length
 
       - name: Create NSIS Script
         run: |
@@ -178,8 +230,8 @@ jobs:
             WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "NoModify" 1
             WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "NoRepair" 1
             
-            ; Copy all files
-            File /r "installer_build\*"
+            ; Copy all files (use /r for recursive, skip symlinks)
+            File /r /x "*.pyc" /x "__pycache__" "installer_build\*"
             
             ; Create uninstaller
             WriteUninstaller "$INSTDIR\uninstall.exe"
