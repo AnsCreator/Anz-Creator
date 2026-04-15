@@ -29,7 +29,7 @@ def _pip_install(package: str, quiet: bool = True) -> bool:
         if quiet:
             cmd.append("-q")
         cmd.append(package)
-        
+
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         subprocess.check_call(cmd, creationflags=creationflags)
         return True
