@@ -685,44 +685,45 @@ class WatermarkRemovalPanel(QWidget):
         self._show_error("Pipeline Error", err)
 
     # ── Download models ──────────────────────────────────
+        # ── Download models ──────────────────────────────────
     def _download_models(
-    self,
-    models: list[tuple[str, str]],
-    on_done=None,
-):
-    dlg = ModelDownloadDialog(self, title="Preparing Models")
-    dlg.show()
+        self,
+        models: list[tuple[str, str]],
+        on_done=None,
+    ):
+        dlg = ModelDownloadDialog(self, title="Preparing Models")
+        dlg.show()
 
-    _models = list(models)
-    _on_done = on_done
+        # Capture for closure
+        _models = list(models)
+        _on_done = on_done
 
-    def _dl(progress_callback=None, cancel_flag=None):
-        for i, (fam, var) in enumerate(_models):
-            if fam == "sam2" and progress_callback:
-                progress_callback(10, "Installing SAM2 package (this may take 2-5 minutes)...")
+        def _dl(progress_callback=None, cancel_flag=None):
+            for fam, var in _models:
+                if fam == "sam2" and progress_callback:
+                    progress_callback(10, "Installing SAM2 package (this may take 2-5 minutes)...")
+                self.model_mgr.download(
+                    fam, var,
+                    progress_callback=progress_callback,
+                    cancel_flag=cancel_flag,
+                )
+            return True
 
-            self.model_mgr.download(
-                fam, var,
-                progress_callback=progress_callback,
-                cancel_flag=cancel_flag,
-            )
-        return True
+        def _on_finished(_result):
+            dlg.close()
+            if _on_done:
+                _on_done()
 
-    def _on_finished(_result):
-        dlg.close()
-        if _on_done:
-            _on_done()
+        def _on_error(e):
+            dlg.close()
+            self._show_error("Download Error", str(e))
 
-    def _on_error(e):
-        dlg.close()
-        self._show_error("Download Error", str(e))
-
-    worker = Worker(_dl)
-    worker.signals.progress.connect(dlg.update)
-    worker.signals.finished.connect(_on_finished)
-    worker.signals.error.connect(_on_error)
-    dlg.cancel_btn.clicked.connect(worker.cancel)
-    self.task_queue.submit(worker)
+        worker = Worker(_dl)
+        worker.signals.progress.connect(dlg.update)
+        worker.signals.finished.connect(_on_finished)
+        worker.signals.error.connect(_on_error)
+        dlg.cancel_btn.clicked.connect(worker.cancel)
+        self.task_queue.submit(worker)
 
     # ── Cancel ───────────────────────────────────────────
     def _on_cancel(self):
