@@ -29,13 +29,13 @@ def _ensure_sam2_installed() -> bool:
         return True
     except ImportError:
         log.info("SAM2 not found — attempting auto-install…")
-        
+
         # Try multiple install methods
         methods = [
             ["git+https://github.com/facebookresearch/segment-anything-2.git"],
             ["--no-cache-dir", "git+https://github.com/facebookresearch/segment-anything-2.git"],
         ]
-        
+
         for method in methods:
             try:
                 cmd = [sys.executable, "-m", "pip", "install", "-q"] + method
@@ -46,7 +46,7 @@ def _ensure_sam2_installed() -> bool:
             except Exception as e:
                 log.warning(f"Install method failed: {e}")
                 continue
-        
+
         log.error("All SAM2 auto-install methods failed.")
         return False
 
