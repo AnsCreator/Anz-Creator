@@ -77,17 +77,14 @@ jobs:
           pip install PyYAML yt-dlp opencv-python ultralytics numpy Pillow scenedetect requests
           pip install pyinstaller
 
-      - name: Clone and install SAM2
+      - name: Clone SAM2
         run: |
           git clone --depth 1 https://github.com/facebookresearch/segment-anything-2.git
-          cd segment-anything-2
-          pip install -e .
-          cd ..
+          echo "SAM2 cloned to: $pwd\segment-anything-2"
 
       - name: Fix SAM2 symbolic links
         run: |
-          $sam2Path = (python -c "import sam2; import os; print(os.path.dirname(sam2.__file__))")
-          Get-ChildItem -Path $sam2Path -Recurse -File | ForEach-Object {
+          Get-ChildItem -Path "segment-anything-2" -Recurse -File | ForEach-Object {
             if ($_.LinkType -eq "SymbolicLink") {
               Remove-Item $_.FullName -Force
               "model:`n  name: sam2_hiera`n  encoder:`n    embed_dim: 112`n    num_heads: 2`n  decoder:`n    num_mask_tokens: 4" | Out-File -FilePath $_.FullName -Encoding UTF8
@@ -102,21 +99,29 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
+          $env:PYTHONPATH = "$pwd\segment-anything-2;$env:PYTHONPATH"
           pyinstaller `
             --name "Anz-Creator" `
             --windowed `
             --onefile `
             --add-data "config.yaml;." `
             --add-data "version.txt;." `
+            --add-data "segment-anything-2\sam2;sam2" `
             --hidden-import PyQt6 `
             --hidden-import PyQt6.QtCore `
             --hidden-import PyQt6.QtGui `
             --hidden-import PyQt6.QtWidgets `
             --hidden-import qt_material `
             --hidden-import sam2 `
+            --hidden-import sam2.build_sam `
+            --hidden-import sam2.sam2_image_predictor `
+            --hidden-import sam2.sam2_video_predictor `
+            --hidden-import sam2.modeling `
+            --hidden-import sam2.utils `
             --hidden-import ultralytics `
             --hidden-import torch `
             --hidden-import cv2 `
+            --collect-all sam2 `
             --icon icon.ico `
             main.py
 
