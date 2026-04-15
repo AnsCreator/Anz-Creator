@@ -95,37 +95,31 @@ jobs:
           $sam2Path = (python -c "import sam2; import os; print(os.path.dirname(sam2.__file__))")
           Write-Host "SAM2 installed at: $sam2Path"
           
-          # Remove broken symlinks and create dummy config files
           Get-ChildItem -Path $sam2Path -Recurse -File | ForEach-Object {
             if ($_.LinkType -eq "SymbolicLink") {
               Write-Host "Found symlink: $($_.FullName)"
               Remove-Item $_.FullName -Force
               
-              # Create dummy YAML config
               $configContent = @"
-# SAM2 Model Config (Auto-generated)
-# Original symlink target not found, created dummy config
-model:
-  name: sam2_hiera
-  encoder:
-    embed_dim: 112
-    num_heads: 2
-  decoder:
-    num_mask_tokens: 4
-"@
+          model:
+            name: sam2_hiera
+            encoder:
+              embed_dim: 112
+              num_heads: 2
+            decoder:
+              num_mask_tokens: 4
+          "@
               $configContent | Out-File -FilePath $_.FullName -Encoding UTF8
               Write-Host "  -> Created dummy config file"
             }
           }
           
-          # Also fix site-packages
           $sitePackages = python -c "import site; print(site.getsitepackages()[0])"
           Get-ChildItem -Path $sitePackages -Filter "*.yaml" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
             if ($_.LinkType -eq "SymbolicLink") {
               Write-Host "Found symlink in site-packages: $($_.FullName)"
               Remove-Item $_.FullName -Force
-              $configContent = "# SAM2 Model Config`nmodel:`n  name: sam2_hiera"
-              $configContent | Out-File -FilePath $_.FullName -Encoding UTF8
+              "model:`n  name: sam2_hiera" | Out-File -FilePath $_.FullName -Encoding UTF8
               Write-Host "  -> Created dummy config"
             }
           }
@@ -144,7 +138,7 @@ model:
           New-Item -ItemType Directory -Force -Path "installer_build"
           if (Test-Path "dist\Anz-Creator") {
             robocopy "dist\Anz-Creator" "installer_build" /E /COPY:DAT /R:0 /W:0 /NJH /NJS /NDL
-            if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE } else { $LASTEXITCODE = 0 }
+            if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE } else { $global:LASTEXITCODE = 0 }
           } else {
             Copy-Item -Path "dist\*.exe" -Destination "installer_build\" -Force
           }
@@ -247,11 +241,11 @@ model:
             ${{ needs.version.outputs.changelog }}
             
             ### ✨ Features
-            - 🔴 **Watermark Removal** - Auto (YOLOv8) + Manual (SAM2)
-            - 🎬 **ProPainter** - Temporal-consistent video inpainting
-            - 📥 **yt-dlp** - Support 1000+ platforms
-            - 🎨 **PyQt6 Dark UI** - Modern material design
-            - ⚡ **SAM2 Pre-installed** - No manual setup!
+            - 🔴 Watermark Removal - Auto YOLOv8 + Manual SAM2
+            - 🎬 ProPainter - Temporal-consistent video inpainting
+            - 📥 yt-dlp - Support 1000+ platforms
+            - 🎨 PyQt6 Dark UI - Modern material design
+            - ⚡ SAM2 Pre-installed - No manual setup
             
             ### 💻 System Requirements
             - Windows 10/11 64-bit
@@ -259,12 +253,12 @@ model:
             - NVIDIA GPU 4-12GB VRAM (recommended)
             
             ### 📦 Installation
-            1. Download `Anz-Creator-Setup.exe`
+            1. Download Anz-Creator-Setup.exe
             2. Run as Administrator
             3. Follow the setup wizard
             
             ### 🔧 Uninstall
-            Use Windows "Add or Remove Programs" or run `uninstall.exe` in installation folder.
+            Use Windows Add or Remove Programs or run uninstall.exe in installation folder.
           files: ./release/*
           draft: false
           prerelease: false
