@@ -6,7 +6,7 @@ User clicks on watermark → SAM2 segments + propagates across frames.
 from __future__ import annotations
 
 import os
-from typing import Callable
+from typing import Callable, Optional
 
 import cv2
 import numpy as np
@@ -37,7 +37,10 @@ class SAM2Segmentor:
             from sam2.sam2_image_predictor import SAM2ImagePredictor
             from sam2.sam2_video_predictor import SAM2VideoPredictor
 
-            log.info("Loading SAM2 from %s on %s", self.model_path, self.device)
+            log.info(
+                "Loading SAM2 from %s on %s",
+                self.model_path, self.device,
+            )
             # Use appropriate config based on model variant
             model_cfg = "sam2_hiera_b+.yaml"  # default for base+
             if "tiny" in self.model_path:
@@ -47,14 +50,17 @@ class SAM2Segmentor:
             elif "large" in self.model_path:
                 model_cfg = "sam2_hiera_l.yaml"
 
-            sam2_model = build_sam2(model_cfg, self.model_path, device=self.device)
+            sam2_model = build_sam2(
+                model_cfg, self.model_path, device=self.device,
+            )
             self._predictor = SAM2ImagePredictor(sam2_model)
             self._video_predictor = SAM2VideoPredictor(sam2_model)
             log.info("SAM2 loaded successfully.")
         except ImportError:
             raise RuntimeError(
                 "SAM2 is not installed. Please install it from:\n"
-                "  pip install git+https://github.com/facebookresearch/segment-anything-2.git"
+                "  pip install git+https://github.com/"
+                "facebookresearch/segment-anything-2.git"
             )
         except Exception as exc:
             log.error("Failed to load SAM2: %s", exc)
@@ -65,7 +71,7 @@ class SAM2Segmentor:
         self,
         frame: np.ndarray,
         click_points: list[tuple[int, int]],
-        click_labels: list[int] = None,
+        click_labels: Optional[list[int]] = None,
     ) -> np.ndarray:
         """
         Segment watermark in a single frame given user click points.
@@ -99,6 +105,10 @@ class SAM2Segmentor:
         )
 
         # Pick best mask (highest score)
+        if len(scores) == 0:
+            log.warning("SAM2 returned no masks")
+            return np.zeros(frame.shape[:2], dtype=np.uint8)
+
         best_idx = scores.argmax()
         mask = masks[best_idx]
 
@@ -113,10 +123,10 @@ class SAM2Segmentor:
         frames_dir: str,
         initial_mask: np.ndarray,
         masks_dir: str,
-        scene_cuts: list[int] = None,
-        click_points: list[tuple[int, int]] = None,
-        progress_callback: Callable[[int, str], None] = None,
-        cancel_flag: Callable[[], bool] = None,
+        scene_cuts: Optional[list[int]] = None,
+        click_points: Optional[list[tuple[int, int]]] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
+        cancel_flag: Optional[Callable[[], bool]] = None,
     ) -> str:
         """
         Propagate the initial mask to all frames using SAM2 video predictor.
@@ -160,12 +170,16 @@ class SAM2Segmentor:
         # Re-init at scene cuts if provided
         if scene_cuts and click_points:
             for sc_frame in scene_cuts:
-                if 0 < sc_frame < total:  # FIX: Skip frame 0 (already initialized)
-                    frame_path = os.path.join(frames_dir, frame_files[sc_frame])
+                if 0 < sc_frame < total:
+                    frame_path = os.path.join(
+                        frames_dir, frame_files[sc_frame],
+                    )
                     frame = cv2.imread(frame_path)
                     if frame is not None:
                         try:
-                            re_mask = self.segment_frame(frame, click_points)
+                            re_mask = self.segment_frame(
+                                frame, click_points,
+                            )
                             re_mask_tensor = torch.from_numpy(
                                 re_mask.astype(np.float32) / 255.0
                             ).to(self.device)
@@ -182,20 +196,25 @@ class SAM2Segmentor:
                             )
 
         # Propagate
-        for frame_idx, obj_ids, masks in self._video_predictor.propagate_in_video(state):
+        for frame_idx, obj_ids, masks in (
+            self._video_predictor.propagate_in_video(state)
+        ):
             if cancel_flag and cancel_flag():
                 return masks_dir
 
             if frame_idx >= total:
                 break
 
-            mask_np = (masks[0].cpu().numpy().squeeze() > 0.5).astype(np.uint8) * 255
+            mask_data = masks[0].cpu().numpy().squeeze()
+            mask_np = (mask_data > 0.5).astype(np.uint8) * 255
             mask_path = os.path.join(masks_dir, frame_files[frame_idx])
             cv2.imwrite(mask_path, mask_np)
 
             if progress_callback and frame_idx % 10 == 0:
                 pct = int((frame_idx + 1) / total * 100)
-                progress_callback(pct, f"Propagating masks… {frame_idx + 1}/{total}")
+                progress_callback(
+                    pct, f"Propagating masks… {frame_idx + 1}/{total}",
+                )
 
         if progress_callback:
             progress_callback(100, "Mask propagation complete.")

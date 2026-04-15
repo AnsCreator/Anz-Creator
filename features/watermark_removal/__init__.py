@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import os
 import shutil
-from typing import Callable
+from typing import Callable, Optional
+
+import cv2
 
 from core.video_io import get_video_info
 from utils.ffmpeg_wrapper import FFmpegWrapper
@@ -39,15 +41,25 @@ class WatermarkRemovalPipeline:
         self.output_frames_dir = os.path.join(temp_dir, "output")
         self.device = device
 
-        self.detector = WatermarkDetector(yolo_model_path) if yolo_model_path else None
-        self.segmentor = SAM2Segmentor(sam2_model_path, device=device) if sam2_model_path else None
-        self.inpainter = ProPainterInpainter(propainter_model_dir, mode=propainter_mode, device=device)
+        self.detector = (
+            WatermarkDetector(yolo_model_path)
+            if yolo_model_path else None
+        )
+        self.segmentor = (
+            SAM2Segmentor(sam2_model_path, device=device)
+            if sam2_model_path else None
+        )
+        self.inpainter = ProPainterInpainter(
+            propainter_model_dir, mode=propainter_mode, device=device,
+        )
 
     def clean_temp(self):
         """Remove temporary files."""
-        for d in [self.frames_dir, self.masks_dir, self.output_frames_dir]:
+        for d in [
+            self.frames_dir, self.masks_dir, self.output_frames_dir,
+        ]:
             if os.path.exists(d):
-                shutil.rmtree(d)
+                shutil.rmtree(d, ignore_errors=True)
             os.makedirs(d, exist_ok=True)
 
     # ── Full auto pipeline ───────────────────────────────
@@ -55,32 +67,42 @@ class WatermarkRemovalPipeline:
         self,
         video_path: str,
         output_path: str,
-        progress_callback: Callable[[int, str], None] = None,
-        cancel_flag: Callable[[], bool] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
+        cancel_flag: Optional[Callable[[], bool]] = None,
     ) -> str:
         """Run full auto-detection pipeline."""
         if self.detector is None:
-            raise RuntimeError("YOLOv8 model not configured for auto detection.")
+            raise RuntimeError(
+                "YOLOv8 model not configured for auto detection."
+            )
 
         self.clean_temp()
         info = get_video_info(video_path)
 
         # Step 1: Extract frames
         _emit(progress_callback, 5, "Step 1/4: Extracting frames…")
-        FFmpegWrapper.extract_frames(video_path, self.frames_dir, cancel_flag=cancel_flag)
+        FFmpegWrapper.extract_frames(
+            video_path, self.frames_dir, cancel_flag=cancel_flag,
+        )
         if cancel_flag and cancel_flag():
             return ""
 
         # Verify frames were extracted
-        frame_count = len([f for f in os.listdir(self.frames_dir) if f.endswith(".png")])
+        frame_count = len([
+            f for f in os.listdir(self.frames_dir) if f.endswith(".png")
+        ])
         if frame_count == 0:
-            raise RuntimeError("No frames extracted from video. Check FFmpeg installation.")
+            raise RuntimeError(
+                "No frames extracted from video. Check FFmpeg installation."
+            )
 
         # Step 2: Detect watermarks
         _emit(progress_callback, 25, "Step 2/4: Detecting watermarks…")
         self.detector.detect_and_generate_masks(
             self.frames_dir, self.masks_dir,
-            progress_callback=lambda p, m: _emit(progress_callback, 25 + int(p * 0.25), m),
+            progress_callback=lambda p, m: _emit(
+                progress_callback, 25 + int(p * 0.25), m,
+            ),
             cancel_flag=cancel_flag,
         )
         if cancel_flag and cancel_flag():
@@ -90,7 +112,9 @@ class WatermarkRemovalPipeline:
         _emit(progress_callback, 50, "Step 3/4: Inpainting…")
         self.inpainter.inpaint(
             self.frames_dir, self.masks_dir, self.output_frames_dir,
-            progress_callback=lambda p, m: _emit(progress_callback, 50 + int(p * 0.35), m),
+            progress_callback=lambda p, m: _emit(
+                progress_callback, 50 + int(p * 0.35), m,
+            ),
             cancel_flag=cancel_flag,
         )
         if cancel_flag and cancel_flag():
@@ -112,27 +136,35 @@ class WatermarkRemovalPipeline:
         video_path: str,
         output_path: str,
         click_points: list[tuple[int, int]],
-        click_labels: list[int] = None,
-        progress_callback: Callable[[int, str], None] = None,
-        cancel_flag: Callable[[], bool] = None,
+        click_labels: Optional[list[int]] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
+        cancel_flag: Optional[Callable[[], bool]] = None,
     ) -> str:
         """Run manual SAM2-based pipeline with user click points."""
         if self.segmentor is None:
-            raise RuntimeError("SAM2 model not configured for manual segmentation.")
+            raise RuntimeError(
+                "SAM2 model not configured for manual segmentation."
+            )
 
         self.clean_temp()
         info = get_video_info(video_path)
 
         # Step 1: Extract frames
         _emit(progress_callback, 5, "Step 1/5: Extracting frames…")
-        FFmpegWrapper.extract_frames(video_path, self.frames_dir, cancel_flag=cancel_flag)
+        FFmpegWrapper.extract_frames(
+            video_path, self.frames_dir, cancel_flag=cancel_flag,
+        )
         if cancel_flag and cancel_flag():
             return ""
 
         # Verify frames were extracted
-        frame_files = sorted([f for f in os.listdir(self.frames_dir) if f.endswith(".png")])
+        frame_files = sorted([
+            f for f in os.listdir(self.frames_dir) if f.endswith(".png")
+        ])
         if not frame_files:
-            raise RuntimeError("No frames extracted from video. Check FFmpeg installation.")
+            raise RuntimeError(
+                "No frames extracted from video. Check FFmpeg installation."
+            )
 
         # Step 2: Detect scene cuts
         _emit(progress_callback, 15, "Step 2/5: Detecting scene cuts…")
@@ -141,20 +173,25 @@ class WatermarkRemovalPipeline:
 
         # Step 3: SAM2 segment + propagate
         _emit(progress_callback, 20, "Step 3/5: Segmenting watermark…")
-        import cv2
         first_frame_path = os.path.join(self.frames_dir, frame_files[0])
         first_frame = cv2.imread(first_frame_path)
         if first_frame is None:
-            raise RuntimeError(f"Cannot read first frame: {first_frame_path}")
+            raise RuntimeError(
+                f"Cannot read first frame: {first_frame_path}"
+            )
 
-        initial_mask = self.segmentor.segment_frame(first_frame, click_points, click_labels)
+        initial_mask = self.segmentor.segment_frame(
+            first_frame, click_points, click_labels,
+        )
 
         _emit(progress_callback, 30, "Step 3/5: Propagating mask…")
         self.segmentor.propagate_masks(
             self.frames_dir, initial_mask, self.masks_dir,
             scene_cuts=scene_start_frames,
             click_points=click_points,
-            progress_callback=lambda p, m: _emit(progress_callback, 30 + int(p * 0.25), m),
+            progress_callback=lambda p, m: _emit(
+                progress_callback, 30 + int(p * 0.25), m,
+            ),
             cancel_flag=cancel_flag,
         )
         if cancel_flag and cancel_flag():
@@ -164,7 +201,9 @@ class WatermarkRemovalPipeline:
         _emit(progress_callback, 55, "Step 4/5: Inpainting…")
         self.inpainter.inpaint(
             self.frames_dir, self.masks_dir, self.output_frames_dir,
-            progress_callback=lambda p, m: _emit(progress_callback, 55 + int(p * 0.30), m),
+            progress_callback=lambda p, m: _emit(
+                progress_callback, 55 + int(p * 0.30), m,
+            ),
             cancel_flag=cancel_flag,
         )
         if cancel_flag and cancel_flag():
@@ -181,7 +220,9 @@ class WatermarkRemovalPipeline:
         return result
 
 
-def _emit(cb, pct, msg):
+def _emit(
+    cb: Optional[Callable[[int, str], None]], pct: int, msg: str,
+):
     """Emit progress, clamped to 0–100."""
     if cb:
         cb(max(0, min(100, pct)), msg)

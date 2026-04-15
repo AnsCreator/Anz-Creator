@@ -34,7 +34,10 @@ class WatermarkDetector:
             self._model = YOLO(self.model_path)
             log.info("YOLOv8 model loaded: %s", self.model_path)
         except ImportError:
-            log.error("ultralytics package not installed. Install with: pip install ultralytics")
+            log.error(
+                "ultralytics package not installed. "
+                "Install with: pip install ultralytics"
+            )
             raise
         except Exception as exc:
             log.error("Failed to load YOLOv8: %s", exc)
@@ -45,8 +48,8 @@ class WatermarkDetector:
         self,
         frames_dir: str,
         masks_dir: str,
-        progress_callback: Callable[[int, str], None] = None,
-        cancel_flag: Callable[[], bool] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
+        cancel_flag: Optional[Callable[[], bool]] = None,
     ) -> str:
         """
         Detect watermarks in all frames, generate binary masks.
@@ -74,7 +77,9 @@ class WatermarkDetector:
             frame = cv2.imread(frame_path)
 
             if frame is None:
-                log.warning("Cannot read frame: %s, generating empty mask", fname)
+                log.warning(
+                    "Cannot read frame: %s, generating empty mask", fname,
+                )
                 # Create empty mask with default size
                 mask = np.zeros((480, 640), dtype=np.uint8)
                 cv2.imwrite(os.path.join(masks_dir, fname), mask)
@@ -106,7 +111,9 @@ class WatermarkDetector:
 
             if progress_callback and i % 10 == 0:
                 pct = int((i + 1) / total * 100)
-                progress_callback(pct, f"Detecting watermarks… {i + 1}/{total}")
+                progress_callback(
+                    pct, f"Detecting watermarks… {i + 1}/{total}",
+                )
 
         if progress_callback:
             progress_callback(100, "Watermark detection complete.")
@@ -114,7 +121,9 @@ class WatermarkDetector:
         return masks_dir
 
     # ── YOLOv8 detection ─────────────────────────────────
-    def _yolo_detect(self, frame: np.ndarray) -> Optional[tuple[int, int, int, int]]:
+    def _yolo_detect(
+        self, frame: np.ndarray,
+    ) -> Optional[tuple[int, int, int, int]]:
         """Run YOLO and return (x1, y1, x2, y2) or None."""
         try:
             results = self._model(frame, verbose=False)
@@ -124,23 +133,30 @@ class WatermarkDetector:
             # Pick highest confidence detection
             boxes = results[0].boxes
             confs = boxes.conf.cpu().numpy()
+
+            if len(confs) == 0:
+                return None
+
             best_idx = confs.argmax()
 
             if confs[best_idx] < self.confidence_threshold:
                 return None
 
             xyxy = boxes.xyxy[best_idx].cpu().numpy().astype(int)
-            return tuple(xyxy)
+            return (int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3]))
         except Exception as exc:
             log.warning("YOLO detection failed on frame: %s", exc)
             return None
 
     # ── OpenCV fallback (frequency analysis) ─────────────
     @staticmethod
-    def _opencv_fallback(frame: np.ndarray) -> Optional[tuple[int, int, int, int]]:
+    def _opencv_fallback(
+        frame: np.ndarray,
+    ) -> Optional[tuple[int, int, int, int]]:
         """
-        Use high-frequency + alpha analysis to find semi-transparent watermarks.
-        Checks corners and edges where watermarks typically appear.
+        Use high-frequency + alpha analysis to find semi-transparent
+        watermarks. Checks corners and edges where watermarks typically
+        appear.
         """
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         h, w = gray.shape
@@ -153,10 +169,10 @@ class WatermarkDetector:
             ("top_left", (0, 0, int(w * 0.4), int(h * 0.2))),
         ]
 
-        best_score = 0
+        best_score = 0.0
         best_bbox = None
 
-        for name, (rx1, ry1, rx2, ry2) in regions:
+        for _name, (rx1, ry1, rx2, ry2) in regions:
             roi = gray[ry1:ry2, rx1:rx2]
 
             # Skip empty ROIs
@@ -165,11 +181,11 @@ class WatermarkDetector:
 
             # Edge density as watermark indicator
             edges = cv2.Canny(roi, 100, 200)
-            score = np.mean(edges) / 255.0
+            score = float(np.mean(edges)) / 255.0
 
             # Watermarks often have distinctive high-freq patterns
             laplacian = cv2.Laplacian(roi, cv2.CV_64F)
-            freq_score = np.std(laplacian) / 255.0
+            freq_score = float(np.std(laplacian)) / 255.0
 
             combined = score * 0.5 + freq_score * 0.5
 
