@@ -77,6 +77,7 @@ jobs:
       - name: Install base dependencies
         run: |
           python -m pip install --upgrade pip
+          pip install PyQt6 qt-material
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
           pip install pyinstaller
@@ -131,7 +132,7 @@ jobs:
         run: echo '${{ needs.version.outputs.new_tag }}' > version.txt
 
       - name: Build with PyInstaller
-        run: pyinstaller anz_creator.spec
+        run: pyinstaller anz_creator.spec --noconfirm
 
       - name: Prepare dist folder for NSIS
         run: |
