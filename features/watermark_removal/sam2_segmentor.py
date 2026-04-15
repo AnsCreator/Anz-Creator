@@ -7,8 +7,10 @@ Includes auto-install fallback with better error handling.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Callable, Optional
 
 import cv2
@@ -20,7 +22,7 @@ from utils.logger import log
 def _pip_install_sam2() -> tuple[bool, str]:
     """Auto-install SAM2 package. Returns (success, error_message)."""
     log.info("Attempting to install SAM2 from GitHub...")
-    
+
     # Multiple fallback installation methods
     methods = [
         # Method 1: Direct GitHub install
@@ -30,15 +32,12 @@ def _pip_install_sam2() -> tuple[bool, str]:
         # Method 3: Clone then install (more reliable)
         None,  # Special handling below
     ]
-    
+
     for i, method in enumerate(methods):
         try:
             if method is None:
                 # Method 3: Clone and install locally
                 log.info("Trying clone-and-install method...")
-                import tempfile
-                import shutil
-                
                 temp_dir = tempfile.mkdtemp(prefix="sam2_install_")
                 try:
                     # Clone repository
@@ -47,11 +46,11 @@ def _pip_install_sam2() -> tuple[bool, str]:
                                  temp_dir]
                     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
                     subprocess.check_call(clone_cmd, creationflags=creationflags)
-                    
+
                     # Install from local clone
                     install_cmd = [sys.executable, "-m", "pip", "install", "-q", temp_dir]
                     subprocess.check_call(install_cmd, creationflags=creationflags)
-                    
+
                     log.info("SAM2 installed successfully via clone method.")
                     return True, ""
                 finally:
@@ -63,7 +62,7 @@ def _pip_install_sam2() -> tuple[bool, str]:
                 subprocess.check_call(cmd, creationflags=creationflags)
                 log.info("SAM2 installed successfully.")
                 return True, ""
-                
+
         except subprocess.CalledProcessError as e:
             log.warning(f"Install method {i+1} failed: {e}")
             continue
@@ -75,7 +74,7 @@ def _pip_install_sam2() -> tuple[bool, str]:
         except Exception as e:
             log.warning(f"Install method {i+1} failed: {e}")
             continue
-    
+
     return False, "All installation methods failed. Please install manually."
 
 
@@ -106,7 +105,7 @@ class SAM2Segmentor:
         except ImportError:
             log.warning("SAM2 not installed — attempting auto-install…")
             success, error_msg = _pip_install_sam2()
-            
+
             if not success:
                 error_detail = error_msg or "Auto-install failed"
                 raise RuntimeError(
@@ -120,7 +119,7 @@ class SAM2Segmentor:
                     f"  cd segment-anything-2\n"
                     f"  pip install -e ."
                 )
-            
+
             # Retry import after successful install
             import torch  # noqa: F401
             from sam2.build_sam import build_sam2
