@@ -20,16 +20,43 @@ import numpy as np
 from utils.logger import log
 
 
+def _is_frozen() -> bool:
+    """Check if running as PyInstaller bundle."""
+    return getattr(sys, 'frozen', False)
+
+
+def _get_python_executable() -> str:
+    """Get the appropriate Python executable."""
+    if _is_frozen():
+        # In PyInstaller, check if system Python is available
+        python_candidates = ["python", "python3", "py"]
+        for candidate in python_candidates:
+            exe = shutil.which(candidate)
+            if exe:
+                return exe
+        # Fallback to current executable (won't work for pip)
+        return sys.executable
+    else:
+        return sys.executable
+
+
 def _pip_install_sam2() -> tuple[bool, str]:
     """Auto-install SAM2 package. Returns (success, error_message)."""
+    
+    if _is_frozen():
+        log.warning("Running in PyInstaller bundle - cannot auto-install packages.")
+        return False, "Running as compiled executable. Please install SAM2 manually."
+    
     log.info("Attempting to install SAM2 from GitHub...")
 
+    python_exe = _get_python_executable()
+    
     # Multiple fallback installation methods
     methods = [
         # Method 1: Direct GitHub install
-        ["git+https://github.com/facebookresearch/segment-anything-2.git"],
+        [python_exe, "-m", "pip", "install", "-q", "git+https://github.com/facebookresearch/segment-anything-2.git"],
         # Method 2: With --no-cache-dir
-        ["--no-cache-dir", "git+https://github.com/facebookresearch/segment-anything-2.git"],
+        [python_exe, "-m", "pip", "install", "-q", "--no-cache-dir", "git+https://github.com/facebookresearch/segment-anything-2.git"],
         # Method 3: Clone then install (more reliable)
         None,  # Special handling below
     ]
@@ -49,7 +76,7 @@ def _pip_install_sam2() -> tuple[bool, str]:
                     subprocess.check_call(clone_cmd, creationflags=creationflags)
 
                     # Install from local clone
-                    install_cmd = [sys.executable, "-m", "pip", "install", "-q", temp_dir]
+                    install_cmd = [python_exe, "-m", "pip", "install", "-q", temp_dir]
                     subprocess.check_call(install_cmd, creationflags=creationflags)
 
                     log.info("SAM2 installed successfully via clone method.")
@@ -57,10 +84,9 @@ def _pip_install_sam2() -> tuple[bool, str]:
                 finally:
                     shutil.rmtree(temp_dir, ignore_errors=True)
             else:
-                cmd = [sys.executable, "-m", "pip", "install", "-q"] + method
                 creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-                log.info(f"Install attempt {i+1}: pip install {' '.join(method)}")
-                subprocess.check_call(cmd, creationflags=creationflags)
+                log.info(f"Install attempt {i+1}: {' '.join(method)}")
+                subprocess.check_call(method, creationflags=creationflags)
                 log.info("SAM2 installed successfully.")
                 return True, ""
 
@@ -68,7 +94,6 @@ def _pip_install_sam2() -> tuple[bool, str]:
             log.warning(f"Install method {i+1} failed: {e}")
             continue
         except FileNotFoundError as e:
-            # Git not found
             if "git" in str(e).lower():
                 return False, "Git is not installed. Please install Git from https://git-scm.com/"
             continue
@@ -91,6 +116,28 @@ def _check_sam2_import() -> bool:
         return False
 
 
+def _get_install_instructions() -> str:
+    """Get platform-specific installation instructions."""
+    if _is_frozen():
+        return (
+            "You are running the compiled executable version.\n"
+            "SAM2 must be installed in your system Python environment.\n\n"
+            "Please open a Command Prompt / Terminal and run:\n\n"
+            "  pip install git+https://github.com/facebookresearch/segment-anything-2.git\n\n"
+            "After installation, restart Anz-Creator."
+        )
+    else:
+        return (
+            "Please install SAM2 manually:\n\n"
+            "1. Install Git from https://git-scm.com/\n"
+            "2. Run: pip install git+https://github.com/facebookresearch/segment-anything-2.git\n\n"
+            "Or clone and install:\n"
+            "  git clone https://github.com/facebookresearch/segment-anything-2.git\n"
+            "  cd segment-anything-2\n"
+            "  pip install -e ."
+        )
+
+
 class SAM2Segmentor:
     """
     Interactive segmentation using Meta's SAM2.
@@ -109,35 +156,25 @@ class SAM2Segmentor:
         if self._predictor is not None:
             return
 
-        # Try import, auto-install if missing
-        install_attempted = False
-
-        while not _check_sam2_import():
-            if install_attempted:
-                # Already tried install, still failing
+        # Check if SAM2 is importable
+        if not _check_sam2_import():
+            if _is_frozen():
+                # Running as exe - cannot auto-install
                 raise RuntimeError(
-                    "SAM2 installation succeeded but import still fails.\n"
-                    "This may be due to environment mismatch.\n\n"
-                    "Please restart the application or install manually:\n"
-                    "  pip install git+https://github.com/facebookresearch/segment-anything-2.git"
+                    "SAM2 is not installed in your system Python environment.\n\n"
+                    + _get_install_instructions()
                 )
-
+            
+            # Not frozen - try auto-install
             log.warning("SAM2 not installed — attempting auto-install…")
             success, error_msg = _pip_install_sam2()
-            install_attempted = True
 
             if not success:
                 error_detail = error_msg or "Auto-install failed"
                 raise RuntimeError(
                     f"SAM2 is not installed and auto-install failed.\n\n"
                     f"Error: {error_detail}\n\n"
-                    f"Please install manually:\n"
-                    f"1. Install Git from https://git-scm.com/\n"
-                    f"2. Run: pip install git+https://github.com/facebookresearch/segment-anything-2.git\n\n"
-                    f"Or clone and install:\n"
-                    f"  git clone https://github.com/facebookresearch/segment-anything-2.git\n"
-                    f"  cd segment-anything-2\n"
-                    f"  pip install -e ."
+                    + _get_install_instructions()
                 )
 
             # Clear import cache and retry
@@ -147,6 +184,14 @@ class SAM2Segmentor:
                 del sys.modules[m]
             importlib.invalidate_caches()
             log.info("Import cache cleared. Retrying import...")
+            
+            # Check again after install
+            if not _check_sam2_import():
+                raise RuntimeError(
+                    "SAM2 installation succeeded but import still fails.\n"
+                    "This may be due to environment mismatch.\n\n"
+                    + _get_install_instructions()
+                )
 
         log.info("Loading SAM2 from %s on %s", self.model_path, self.device)
 
