@@ -79,6 +79,18 @@ def _pip_install_sam2() -> tuple[bool, str]:
     return False, "All installation methods failed. Please install manually."
 
 
+def _check_sam2_import() -> bool:
+    """Check if SAM2 can be imported."""
+    try:
+        import torch  # noqa: F401
+        from sam2.build_sam import build_sam2  # noqa: F401
+        from sam2.sam2_image_predictor import SAM2ImagePredictor  # noqa: F401
+        from sam2.sam2_video_predictor import SAM2VideoPredictor  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 class SAM2Segmentor:
     """
     Interactive segmentation using Meta's SAM2.
@@ -98,54 +110,43 @@ class SAM2Segmentor:
             return
 
         # Try import, auto-install if missing
-        sam2_imported = False
         install_attempted = False
 
-        while not sam2_imported:
-            try:
-                # Test import only - don't store references yet
-                import torch  # noqa: F401
-                from sam2.build_sam import build_sam2  # noqa: F401
-                from sam2.sam2_image_predictor import SAM2ImagePredictor  # noqa: F401
-                from sam2.sam2_video_predictor import SAM2VideoPredictor  # noqa: F401
-                sam2_imported = True
-            except ImportError:
-                if install_attempted:
-                    # Already tried install, still failing
-                    raise RuntimeError(
-                        "SAM2 installation succeeded but import still fails.\n"
-                        "This may be due to environment mismatch.\n\n"
-                        "Please restart the application or install manually:\n"
-                        "  pip install git+https://github.com/facebookresearch/segment-anything-2.git"
-                    )
+        while not _check_sam2_import():
+            if install_attempted:
+                # Already tried install, still failing
+                raise RuntimeError(
+                    "SAM2 installation succeeded but import still fails.\n"
+                    "This may be due to environment mismatch.\n\n"
+                    "Please restart the application or install manually:\n"
+                    "  pip install git+https://github.com/facebookresearch/segment-anything-2.git"
+                )
 
-                log.warning("SAM2 not installed — attempting auto-install…")
-                success, error_msg = _pip_install_sam2()
-                install_attempted = True
+            log.warning("SAM2 not installed — attempting auto-install…")
+            success, error_msg = _pip_install_sam2()
+            install_attempted = True
 
-                if not success:
-                    error_detail = error_msg or "Auto-install failed"
-                    raise RuntimeError(
-                        f"SAM2 is not installed and auto-install failed.\n\n"
-                        f"Error: {error_detail}\n\n"
-                        f"Please install manually:\n"
-                        f"1. Install Git from https://git-scm.com/\n"
-                        f"2. Run: pip install git+https://github.com/facebookresearch/segment-anything-2.git\n\n"
-                        f"Or clone and install:\n"
-                        f"  git clone https://github.com/facebookresearch/segment-anything-2.git\n"
-                        f"  cd segment-anything-2\n"
-                        f"  pip install -e ."
-                    )
+            if not success:
+                error_detail = error_msg or "Auto-install failed"
+                raise RuntimeError(
+                    f"SAM2 is not installed and auto-install failed.\n\n"
+                    f"Error: {error_detail}\n\n"
+                    f"Please install manually:\n"
+                    f"1. Install Git from https://git-scm.com/\n"
+                    f"2. Run: pip install git+https://github.com/facebookresearch/segment-anything-2.git\n\n"
+                    f"Or clone and install:\n"
+                    f"  git clone https://github.com/facebookresearch/segment-anything-2.git\n"
+                    f"  cd segment-anything-2\n"
+                    f"  pip install -e ."
+                )
 
-                # Clear import cache and retry
-                log.info("SAM2 installed. Clearing import cache...")
-                modules_to_clear = [m for m in sys.modules if m.startswith('sam2')]
-                for m in modules_to_clear:
-                    del sys.modules[m]
-
-                # Also clear any cached finder/loader state
-                importlib.invalidate_caches()
-                log.info("Import cache cleared. Retrying import...")
+            # Clear import cache and retry
+            log.info("SAM2 installed. Clearing import cache...")
+            modules_to_clear = [m for m in sys.modules if m.startswith('sam2')]
+            for m in modules_to_clear:
+                del sys.modules[m]
+            importlib.invalidate_caches()
+            log.info("Import cache cleared. Retrying import...")
 
         log.info("Loading SAM2 from %s on %s", self.model_path, self.device)
 
