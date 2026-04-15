@@ -1,11 +1,14 @@
 """
 Model Manager — auto-download, verify, and load AI models.
 Models persist in %APPDATA%/Anz-Creator/models/.
+Includes auto-install for SAM2 package.
 """
 
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Callable, Optional
@@ -17,6 +20,39 @@ from utils.logger import log
 
 _APPDATA = os.environ.get("APPDATA", os.path.expanduser("~"))
 MODELS_ROOT = os.path.join(_APPDATA, "Anz-Creator", "models")
+
+
+def _pip_install(package: str, quiet: bool = True) -> bool:
+    """Install a pip package programmatically."""
+    try:
+        cmd = [sys.executable, "-m", "pip", "install"]
+        if quiet:
+            cmd.append("-q")
+        cmd.append(package)
+        
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        subprocess.check_call(cmd, creationflags=creationflags)
+        return True
+    except Exception as e:
+        log.error("Failed to install %s: %s", package, e)
+        return False
+
+
+def _ensure_sam2_installed() -> bool:
+    """Auto-install SAM2 if not present."""
+    try:
+        import sam2  # noqa: F401
+        return True
+    except ImportError:
+        log.info("SAM2 not found — installing automatically…")
+        success = _pip_install(
+            "git+https://github.com/facebookresearch/segment-anything-2.git"
+        )
+        if success:
+            log.info("SAM2 installed successfully.")
+        else:
+            log.error("SAM2 auto-install failed.")
+        return success
 
 
 class ModelManager:
@@ -60,33 +96,6 @@ class ModelManager:
         except (KeyError, TypeError):
             return 0
 
-    def _ensure_sam2_installed(self):
-    """Auto-install SAM2 if not present."""
-    try:
-        import sam2
-        return True
-    except ImportError:
-        log.info("SAM2 not found — installing automatically…")
-        import subprocess
-        import sys
-        
-        try:
-            # Try pip install from GitHub
-            subprocess.check_call([
-                sys.executable, "-m", "pip", "install", "-q",
-                "git+https://github.com/facebookresearch/segment-anything-2.git"
-            ], 
-            stdout=subprocess.DEVNULL, 
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-            
-            log.info("SAM2 installed successfully.")
-            return True
-            
-        except subprocess.CalledProcessError as e:
-            log.error("SAM2 auto-install failed: %s", e)
-            return False
-    
     def list_variants(self, family: str) -> list[dict]:
         """Return list of {name, description, size_mb, downloaded}."""
         try:
@@ -124,9 +133,22 @@ class ModelManager:
         progress_callback(percent, message)
         Thread-safe: only one download per model at a time.
         """
+        # Auto-install SAM2 package if needed
+        if family == "sam2":
+            if progress_callback:
+                progress_callback(0, "Checking SAM2 installation…")
+            if not _ensure_sam2_installed():
+                raise RuntimeError(
+                    "Failed to install SAM2 automatically.\n"
+                    "Please install manually:\n"
+                    "  pip install git+https://github.com/facebookresearch/segment-anything-2.git"
+                )
+
         dest = self.model_path(family, variant)
         if self.is_downloaded(family, variant):
             log.info("Model already cached: %s", dest)
+            if progress_callback:
+                progress_callback(100, f"{variant} ready (cached).")
             return dest
 
         url = self.get_url(family, variant)
@@ -137,6 +159,8 @@ class ModelManager:
             # Re-check after acquiring lock (another thread may have downloaded it)
             if self.is_downloaded(family, variant):
                 log.info("Model already cached (after lock): %s", dest)
+                if progress_callback:
+                    progress_callback(100, f"{variant} ready (cached).")
                 return dest
 
             Path(os.path.dirname(dest)).mkdir(parents=True, exist_ok=True)
@@ -191,28 +215,6 @@ class ModelManager:
                 log.error("Download failed: %s", exc)
                 raise
 
-    def download(
-    self,
-    family: str,
-    variant: str,
-    progress_callback: Optional[Callable[[int, str], None]] = None,
-    cancel_flag: Optional[Callable[[], bool]] = None,
-) -> str:
-    """Download a model if not present. Returns local path."""
-    
-    # Auto-install SAM2 package if needed
-    if family == "sam2":
-        if progress_callback:
-            progress_callback(0, "Checking SAM2 installation…")
-        if not self._ensure_sam2_installed():
-            raise RuntimeError(
-                "Failed to install SAM2 automatically.\n"
-                "Please install manually:\n"
-                "  pip install git+https://github.com/facebookresearch/segment-anything-2.git"
-            )
-    
-    dest = self.model_path(family, variant)
-    
     def ensure_models(
         self,
         families: list[str],
