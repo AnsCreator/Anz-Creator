@@ -10,7 +10,7 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
-from typing import Generator, Optional
+from typing import Generator
 
 import cv2
 import numpy as np
