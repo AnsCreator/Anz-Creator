@@ -242,6 +242,8 @@ class TestInpainterPresets:
 
     def test_presets_exist(self):
         pytest.importorskip("cv2")
+        if not _has_module("torch"):
+            pytest.skip("torch not installed")
         from features.watermark_removal.inpainter import ProPainterInpainter
         presets = ProPainterInpainter.PRESETS
         assert "lightweight" in presets
@@ -251,6 +253,8 @@ class TestInpainterPresets:
 
     def test_standard_preset_values(self):
         pytest.importorskip("cv2")
+        if not _has_module("torch"):
+            pytest.skip("torch not installed")
         from features.watermark_removal.inpainter import ProPainterInpainter
         std = ProPainterInpainter.PRESETS["standard"]
         assert std["neighbor_length"] == 10
