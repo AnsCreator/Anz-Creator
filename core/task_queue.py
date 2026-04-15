@@ -5,6 +5,7 @@ All heavy processing runs here so the UI never freezes.
 
 from __future__ import annotations
 
+import threading
 import traceback
 from typing import Callable, Optional
 
@@ -40,6 +41,7 @@ class Worker(QRunnable):
         self.kwargs = kwargs
         self.signals = WorkerSignals()
         self._cancelled = False
+        self.setAutoDelete(False)  # Prevent premature GC
 
         if progress_callback is None:
             self.kwargs["progress_callback"] = self.signals.progress.emit
@@ -74,44 +76,53 @@ class TaskQueue:
     """Singleton task queue backed by QThreadPool."""
 
     _instance = None
+    _lock = threading.Lock()
 
     def __new__(cls):
         if cls._instance is None:
-            inst = super().__new__(cls)
-            inst._pool = QThreadPool.globalInstance()
-            inst._pool.setMaxThreadCount(4)
-            inst._active: list[Worker] = []
-            log.info(
-                "TaskQueue ready — max threads: %d",
-                inst._pool.maxThreadCount(),
-            )
-            cls._instance = inst
+            with cls._lock:
+                if cls._instance is None:
+                    inst = super().__new__(cls)
+                    inst._pool = QThreadPool.globalInstance()
+                    inst._pool.setMaxThreadCount(4)
+                    inst._active: list[Worker] = []
+                    inst._active_lock = threading.Lock()
+                    log.info(
+                        "TaskQueue ready — max threads: %d",
+                        inst._pool.maxThreadCount(),
+                    )
+                    cls._instance = inst
         return cls._instance
 
     def submit(self, worker: Worker) -> Worker:
         """Submit a Worker to the thread pool."""
-        self._active.append(worker)
+        with self._active_lock:
+            self._active.append(worker)
+
         worker.signals.finished.connect(lambda _: self._cleanup(worker))
         worker.signals.error.connect(lambda _: self._cleanup(worker))
         worker.signals.cancelled.connect(lambda: self._cleanup(worker))
         self._pool.start(worker)
-        # FIX: Safe attribute access for fn name
+
         fn_name = getattr(worker.fn, "__name__", repr(worker.fn))
         log.debug("Task submitted: %s", fn_name)
         return worker
 
     def cancel_all(self):
-        for w in list(self._active):  # FIX: Iterate copy to avoid mutation issues
+        with self._active_lock:
+            workers = list(self._active)
+        for w in workers:
             w.cancel()
         log.info("All tasks cancelled.")
 
     def _cleanup(self, worker: Worker):
-        try:
-            if worker in self._active:
+        with self._active_lock:
+            try:
                 self._active.remove(worker)
-        except ValueError:
-            pass  # Already removed
+            except ValueError:
+                pass  # Already removed
 
     @property
     def active_count(self) -> int:
-        return len(self._active)
+        with self._active_lock:
+            return len(self._active)

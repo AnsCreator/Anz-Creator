@@ -3,6 +3,7 @@ Persistent user settings backed by a YAML file in %APPDATA%.
 """
 
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -37,15 +38,20 @@ _SETTINGS_FILE = os.path.join(_SETTINGS_DIR, "settings.yaml")
 
 
 class Settings:
-    """Singleton-style settings store."""
+    """Singleton-style settings store with thread safety."""
     _instance = None
+    _lock = threading.Lock()
 
     def __new__(cls):
         if cls._instance is None:
-            inst = super().__new__(cls)
-            inst._data = {}
-            inst._load()
-            cls._instance = inst
+            with cls._lock:
+                # Double-check locking
+                if cls._instance is None:
+                    inst = super().__new__(cls)
+                    inst._data = {}
+                    inst._save_lock = threading.Lock()
+                    inst._load()
+                    cls._instance = inst
         return cls._instance
 
     def _load(self):
@@ -62,13 +68,28 @@ class Settings:
         self._data = _deep_merge(_DEFAULT, self._data)
 
     def save(self):
-        try:
-            Path(_SETTINGS_DIR).mkdir(parents=True, exist_ok=True)
-            with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
-                yaml.dump(self._data, f, default_flow_style=False)
-            log.debug("Settings saved.")
-        except Exception as exc:
-            log.error("Failed to save settings: %s", exc)
+        with self._save_lock:
+            try:
+                Path(_SETTINGS_DIR).mkdir(parents=True, exist_ok=True)
+                # Write to temp file first, then rename for atomicity
+                tmp_file = _SETTINGS_FILE + ".tmp"
+                with open(tmp_file, "w", encoding="utf-8") as f:
+                    yaml.dump(self._data, f, default_flow_style=False)
+                # Atomic rename (on Windows, need to remove target first)
+                if os.path.exists(_SETTINGS_FILE):
+                    os.replace(tmp_file, _SETTINGS_FILE)
+                else:
+                    os.rename(tmp_file, _SETTINGS_FILE)
+                log.debug("Settings saved.")
+            except Exception as exc:
+                log.error("Failed to save settings: %s", exc)
+                # Clean up temp file
+                tmp_file = _SETTINGS_FILE + ".tmp"
+                if os.path.exists(tmp_file):
+                    try:
+                        os.remove(tmp_file)
+                    except OSError:
+                        pass
 
     def get(self, dotpath: str, default: Any = None) -> Any:
         keys = dotpath.split(".")
@@ -80,8 +101,8 @@ class Settings:
                 return default
         return node
 
-    def get_path(self, dotpath: str, default: Any = None) -> str:
-        """Mengembalikan nilai konfigurasi dan mengekstrak env vars (e.g. %APPDATA%)."""
+    def get_path(self, dotpath: str, default: Any = None) -> Any:
+        """Return config value with env vars expanded (e.g. %APPDATA%)."""
         val = self.get(dotpath, default)
         if isinstance(val, str):
             return os.path.expandvars(os.path.expanduser(val))
@@ -101,7 +122,8 @@ class Settings:
 
     @classmethod
     def reset_instance(cls):
-        cls._instance = None
+        with cls._lock:
+            cls._instance = None
 
 
 def _deep_merge(base: dict, override: dict) -> dict:

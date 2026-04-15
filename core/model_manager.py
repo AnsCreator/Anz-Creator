@@ -6,6 +6,7 @@ Models persist in %APPDATA%/Anz-Creator/models/.
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -34,6 +35,7 @@ class ModelManager:
             log.error("Failed to load config: %s", exc)
             self._cfg = {}
         Path(MODELS_ROOT).mkdir(parents=True, exist_ok=True)
+        self._download_lock = threading.Lock()
         log.info("ModelManager — root: %s", MODELS_ROOT)
 
     # ── public API ───────────────────────────────────────
@@ -44,7 +46,6 @@ class ModelManager:
 
     def is_downloaded(self, family: str, variant: str) -> bool:
         path = self.model_path(family, variant)
-        # FIX: Also check file is not empty (corrupt download)
         return os.path.isfile(path) and os.path.getsize(path) > 0
 
     def get_url(self, family: str, variant: str) -> Optional[str]:
@@ -62,7 +63,7 @@ class ModelManager:
     def list_variants(self, family: str) -> list[dict]:
         """Return list of {name, description, size_mb, downloaded}."""
         try:
-            opts = self._cfg["models"].get(family, {}).get("options", {})
+            opts = self._cfg.get("models", {}).get(family, {}).get("options", {})
         except (AttributeError, TypeError):
             return []
         out = []
@@ -80,7 +81,7 @@ class ModelManager:
 
     def default_variant(self, family: str) -> str:
         try:
-            return self._cfg["models"].get(family, {}).get("default", "")
+            return self._cfg.get("models", {}).get(family, {}).get("default", "")
         except (AttributeError, TypeError):
             return ""
 
@@ -88,12 +89,13 @@ class ModelManager:
         self,
         family: str,
         variant: str,
-        progress_callback: Callable[[int, str], None] = None,
-        cancel_flag: Callable[[], bool] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
+        cancel_flag: Optional[Callable[[], bool]] = None,
     ) -> str:
         """
         Download a model if not present. Returns local path.
         progress_callback(percent, message)
+        Thread-safe: only one download per model at a time.
         """
         dest = self.model_path(family, variant)
         if self.is_downloaded(family, variant):
@@ -104,58 +106,70 @@ class ModelManager:
         if not url:
             raise ValueError(f"No download URL for {family}/{variant}")
 
-        Path(os.path.dirname(dest)).mkdir(parents=True, exist_ok=True)
-        tmp = dest + ".part"
-        size_mb = self.get_size_mb(family, variant)
+        with self._download_lock:
+            # Re-check after acquiring lock (another thread may have downloaded it)
+            if self.is_downloaded(family, variant):
+                log.info("Model already cached (after lock): %s", dest)
+                return dest
 
-        log.info("Downloading %s/%s (≈%dMB) from %s", family, variant, size_mb, url)
-        if progress_callback:
-            progress_callback(0, f"Downloading {variant}…")
+            Path(os.path.dirname(dest)).mkdir(parents=True, exist_ok=True)
+            tmp = dest + ".part"
+            size_mb = self.get_size_mb(family, variant)
 
-        try:
-            resp = requests.get(url, stream=True, timeout=30)
-            resp.raise_for_status()
-            total = int(resp.headers.get("content-length", 0))
-            downloaded = 0
-
-            with open(tmp, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=1024 * 256):
-                    if cancel_flag and cancel_flag():
-                        log.info("Download cancelled: %s", variant)
-                        f.close()
-                        if os.path.exists(tmp):
-                            os.remove(tmp)
-                        return ""
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total > 0 and progress_callback:
-                        pct = int(downloaded / total * 100)
-                        progress_callback(
-                            pct,
-                            f"Downloading {variant}… {downloaded // 1048576}/{total // 1048576} MB",
-                        )
-
-            os.rename(tmp, dest)
-            log.info("Model saved: %s", dest)
+            log.info("Downloading %s/%s (≈%dMB) from %s", family, variant, size_mb, url)
             if progress_callback:
-                progress_callback(100, f"{variant} ready.")
-            return dest
+                progress_callback(0, f"Downloading {variant}…")
 
-        except Exception as exc:
-            if os.path.exists(tmp):
-                try:
+            try:
+                resp = requests.get(url, stream=True, timeout=(15, 30))
+                resp.raise_for_status()
+                total = int(resp.headers.get("content-length", 0))
+                downloaded = 0
+
+                with open(tmp, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=1024 * 256):
+                        if cancel_flag and cancel_flag():
+                            log.info("Download cancelled: %s", variant)
+                            f.close()
+                            if os.path.exists(tmp):
+                                os.remove(tmp)
+                            return ""
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total > 0 and progress_callback:
+                            pct = int(downloaded / total * 100)
+                            progress_callback(
+                                pct,
+                                f"Downloading {variant}… "
+                                f"{downloaded // 1048576}/{total // 1048576} MB",
+                            )
+
+                # Verify download isn't empty/corrupt
+                if os.path.getsize(tmp) == 0:
                     os.remove(tmp)
-                except OSError:
-                    pass
-            log.error("Download failed: %s", exc)
-            raise
+                    raise RuntimeError(f"Downloaded file is empty: {variant}")
+
+                os.rename(tmp, dest)
+                log.info("Model saved: %s", dest)
+                if progress_callback:
+                    progress_callback(100, f"{variant} ready.")
+                return dest
+
+            except Exception as exc:
+                if os.path.exists(tmp):
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
+                log.error("Download failed: %s", exc)
+                raise
 
     def ensure_models(
         self,
         families: list[str],
         settings,
-        progress_callback=None,
-        cancel_flag=None,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
+        cancel_flag: Optional[Callable[[], bool]] = None,
     ) -> dict[str, str]:
         """Ensure all required default models are present. Returns {family: path}."""
         paths = {}

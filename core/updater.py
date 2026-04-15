@@ -25,7 +25,9 @@ def get_current_version() -> str:
     if os.path.isfile(VERSION_FILE):
         try:
             with open(VERSION_FILE, "r", encoding="utf-8") as f:
-                return f.read().strip()
+                ver = f.read().strip()
+                if ver:
+                    return ver
         except Exception:
             pass
     return "v0.0.0.0"
@@ -34,6 +36,8 @@ def get_current_version() -> str:
 def _parse_version(tag: str) -> tuple[int, ...]:
     """Parse 'v1.0.0.1' into (1, 0, 0, 1)."""
     clean = tag.lstrip("v").strip()
+    if not clean:
+        return (0, 0, 0, 0)
     parts = []
     for p in clean.split("."):
         try:
@@ -43,7 +47,7 @@ def _parse_version(tag: str) -> tuple[int, ...]:
     # Pad to 4 parts
     while len(parts) < 4:
         parts.append(0)
-    return tuple(parts[:4])  # FIX: Limit to 4 parts max
+    return tuple(parts[:4])
 
 
 def check_for_update() -> Optional[dict]:
@@ -55,7 +59,10 @@ def check_for_update() -> Optional[dict]:
     log.info("Current version: %s", current)
 
     try:
-        resp = requests.get(GITHUB_API, timeout=10)
+        resp = requests.get(
+            GITHUB_API, timeout=10,
+            headers={"User-Agent": "Anz-Creator"},
+        )
         resp.raise_for_status()
         data = resp.json()
 
@@ -105,8 +112,8 @@ def check_for_update() -> Optional[dict]:
 
 def download_update(
     url: str,
-    progress_callback: Callable[[int, str], None] = None,
-    cancel_flag: Callable[[], bool] = None,
+    progress_callback: Optional[Callable[[int, str], None]] = None,
+    cancel_flag: Optional[Callable[[], bool]] = None,
 ) -> str:
     """
     Download update zip to temp folder.
@@ -118,6 +125,7 @@ def download_update(
     )
     os.makedirs(update_dir, exist_ok=True)
     dest = os.path.join(update_dir, "update.zip")
+    tmp = dest + ".part"
 
     log.info("Downloading update from %s", url)
     if progress_callback:
@@ -129,10 +137,13 @@ def download_update(
         total = int(resp.headers.get("content-length", 0))
         downloaded = 0
 
-        with open(dest, "wb") as f:
+        with open(tmp, "wb") as f:
             for chunk in resp.iter_content(chunk_size=256 * 1024):
                 if cancel_flag and cancel_flag():
                     log.info("Update download cancelled.")
+                    f.close()
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
                     return ""
                 f.write(chunk)
                 downloaded += len(chunk)
@@ -140,8 +151,14 @@ def download_update(
                     pct = int(downloaded / total * 100)
                     progress_callback(
                         pct,
-                        f"Downloading… {downloaded // 1048576}/{total // 1048576} MB",
+                        f"Downloading… {downloaded // 1048576}/"
+                        f"{total // 1048576} MB",
                     )
+
+        # Move complete download to final path
+        if os.path.exists(dest):
+            os.remove(dest)
+        os.rename(tmp, dest)
 
         if progress_callback:
             progress_callback(100, "Download complete.")
@@ -150,12 +167,20 @@ def download_update(
 
     except Exception as exc:
         log.error("Update download failed: %s", exc)
-        if os.path.exists(dest):
-            try:
-                os.remove(dest)
-            except OSError:
-                pass
+        for path in (tmp, dest):
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
         raise
+
+
+def _escape_batch_path(path: str) -> str:
+    """Escape a path for safe use in a Windows batch script."""
+    # Replace characters that could be interpreted by cmd.exe
+    # The safest approach is to quote the path
+    return path.replace("^", "^^").replace("&", "^&").replace("|", "^|")
 
 
 def apply_update(zip_path: str) -> str:
@@ -177,45 +202,48 @@ def apply_update(zip_path: str) -> str:
     else:
         # Running from source
         app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        app_exe = f'"{sys.executable}" "{os.path.join(app_dir, "main.py")}"'
+        app_exe = sys.executable
 
     # Create updater batch script
     update_dir = os.path.dirname(zip_path)
     batch_path = os.path.join(update_dir, "update.bat")
 
-    batch_content = '@echo off\r\n'
-    batch_content += 'echo Anz-Creator Updater\r\n'
-    batch_content += 'echo Waiting for application to close...\r\n'
-    batch_content += 'timeout /t 5 /nobreak > nul\r\n'
-    batch_content += 'echo.\r\n'
-    batch_content += 'echo Extracting update...\r\n'
-    batch_content += (
-        'powershell -Command "'
-        "Expand-Archive -Path '"
-        + zip_path.replace("'", "''")
-        + "' -DestinationPath '"
-        + app_dir.replace("'", "''")
-        + "' -Force"
-        + '"\r\n'
-    )
-    batch_content += 'echo.\r\n'
-    batch_content += 'echo Cleaning up...\r\n'
-    batch_content += 'del "' + zip_path + '" 2>nul\r\n'
-    batch_content += 'echo.\r\n'
-    batch_content += 'echo Starting Anz-Creator...\r\n'
+    # Escape paths for PowerShell single-quoted strings
+    ps_zip = zip_path.replace("'", "''")
+    ps_app = app_dir.replace("'", "''")
+
+    lines = [
+        '@echo off',
+        'echo Anz-Creator Updater',
+        'echo Waiting for application to close...',
+        'timeout /t 5 /nobreak > nul',
+        'echo.',
+        'echo Extracting update...',
+        f"powershell -Command \"Expand-Archive -Path '{ps_zip}'"
+        f" -DestinationPath '{ps_app}' -Force\"",
+        'echo.',
+        'echo Cleaning up...',
+        f'del "{_escape_batch_path(zip_path)}" 2>nul',
+        'echo.',
+        'echo Starting Anz-Creator...',
+    ]
+
     if getattr(sys, "frozen", False):
-        batch_content += 'start "" "' + app_exe + '"\r\n'
+        lines.append(f'start "" "{_escape_batch_path(app_exe)}"')
     else:
-        batch_content += (
-            'start "" "'
-            + sys.executable
-            + '" "'
-            + os.path.join(app_dir, "main.py")
-            + '"\r\n'
+        main_py = os.path.join(app_dir, "main.py")
+        lines.append(
+            f'start "" "{_escape_batch_path(app_exe)}"'
+            f' "{_escape_batch_path(main_py)}"'
         )
-    batch_content += 'echo Update complete!\r\n'
-    batch_content += 'del "%~f0" 2>nul\r\n'
-    batch_content += 'exit\r\n'
+
+    lines.extend([
+        'echo Update complete!',
+        'del "%~f0" 2>nul',
+        'exit',
+    ])
+
+    batch_content = "\r\n".join(lines) + "\r\n"
 
     with open(batch_path, "w", encoding="utf-8") as f:
         f.write(batch_content)

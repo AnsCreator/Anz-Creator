@@ -10,7 +10,7 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
-from typing import Generator
+from typing import Generator, Optional
 
 import cv2
 import numpy as np
@@ -93,7 +93,6 @@ def _auto_download_ffmpeg(app_bin: str) -> str:
 
     import requests
 
-    # BtbN builds are smaller and faster than gyan.dev
     SOURCES = [
         (
             "https://github.com/BtbN/FFmpeg-Builds/releases/download/"
@@ -119,7 +118,7 @@ def _auto_download_ffmpeg(app_bin: str) -> str:
         log.info("Downloading FFmpeg from %s…", source_name)
         try:
             resp = requests.get(
-                url, stream=True, timeout=(15, 30), allow_redirects=True,
+                url, stream=True, timeout=(15, 60), allow_redirects=True,
                 headers={"User-Agent": "Anz-Creator/1.0"},
             )
             resp.raise_for_status()
@@ -138,7 +137,9 @@ def _auto_download_ffmpeg(app_bin: str) -> str:
                             last_pct = pct
                             log.info(
                                 "FFmpeg download: %d%% (%dMB/%dMB)",
-                                pct, downloaded // 1048576, total // 1048576,
+                                pct,
+                                downloaded // 1048576,
+                                total // 1048576,
                             )
 
             log.info("Download complete. Extracting…")
@@ -147,7 +148,10 @@ def _auto_download_ffmpeg(app_bin: str) -> str:
         except Exception as exc:
             log.warning("FFmpeg download from %s failed: %s", source_name, exc)
             if os.path.exists(zip_path):
-                os.remove(zip_path)
+                try:
+                    os.remove(zip_path)
+                except OSError:
+                    pass
             continue
     else:
         log.error("All FFmpeg download sources failed.")
@@ -160,7 +164,6 @@ def _auto_download_ffmpeg(app_bin: str) -> str:
                 basename = os.path.basename(member)
                 if basename in ("ffmpeg.exe", "ffprobe.exe"):
                     target = os.path.join(app_bin, basename)
-                    # FIX: Use shutil.copyfileobj (top-level import)
                     with zf.open(member) as src, open(target, "wb") as dst:
                         shutil.copyfileobj(src, dst)
                     log.info("Extracted: %s", target)
@@ -172,10 +175,17 @@ def _auto_download_ffmpeg(app_bin: str) -> str:
             log.info("FFmpeg ready: %s", ffmpeg_dest)
             return ffmpeg_dest
 
+    except zipfile.BadZipFile as exc:
+        log.error("FFmpeg zip is corrupt: %s", exc)
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
     except Exception as exc:
         log.error("FFmpeg extraction failed: %s", exc)
         if os.path.exists(zip_path):
-            os.remove(zip_path)
+            try:
+                os.remove(zip_path)
+            except OSError:
+                pass
 
     return "ffmpeg"
 
@@ -187,6 +197,7 @@ def get_video_info(path: str) -> VideoInfo:
 
     # Try OpenCV first (fast)
     width, height, fps, frame_count, codec = 0, 0, 0.0, 0, ""
+    cap = None
     try:
         cap = cv2.VideoCapture(path)
         if cap.isOpened():
@@ -195,9 +206,11 @@ def get_video_info(path: str) -> VideoInfo:
             fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
             frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             codec = _fourcc_to_str(int(cap.get(cv2.CAP_PROP_FOURCC)))
-            cap.release()
     except Exception as exc:
         log.warning("OpenCV metadata failed: %s", exc)
+    finally:
+        if cap is not None:
+            cap.release()
 
     # If OpenCV returned invalid data, try ffprobe
     if width <= 0 or height <= 0 or fps <= 0:
@@ -217,10 +230,12 @@ def get_video_info(path: str) -> VideoInfo:
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=10,
                 creationflags=cf, startupinfo=si,
+                encoding="utf-8", errors="replace",
             )
-            if result.returncode == 0:
+            if result.returncode == 0 and result.stdout:
                 data = json.loads(result.stdout)
-                stream = data.get("streams", [{}])[0]
+                streams = data.get("streams", [])
+                stream = streams[0] if streams else {}
                 fmt = data.get("format", {})
 
                 width = int(stream.get("width", 0)) or width
@@ -230,18 +245,34 @@ def get_video_info(path: str) -> VideoInfo:
                 # Parse r_frame_rate like "30/1" or "30000/1001"
                 rfr = stream.get("r_frame_rate", "")
                 if "/" in rfr:
-                    num, den = rfr.split("/")
-                    fps = float(num) / float(den) if float(den) > 0 else fps
+                    parts = rfr.split("/")
+                    if len(parts) == 2:
+                        try:
+                            num_f = float(parts[0])
+                            den_f = float(parts[1])
+                            if den_f > 0:
+                                fps = num_f / den_f
+                        except ValueError:
+                            pass
                 elif rfr:
-                    fps = float(rfr)
+                    try:
+                        fps = float(rfr)
+                    except ValueError:
+                        pass
 
                 nb = stream.get("nb_frames", "")
                 if nb and nb != "N/A":
-                    frame_count = int(nb)
+                    try:
+                        frame_count = int(nb)
+                    except ValueError:
+                        pass
 
                 dur_str = fmt.get("duration", "")
                 if dur_str and fps > 0 and frame_count <= 0:
-                    frame_count = int(float(dur_str) * fps)
+                    try:
+                        frame_count = int(float(dur_str) * fps)
+                    except ValueError:
+                        pass
 
                 log.info(
                     "ffprobe info: %dx%d @ %.1ffps, %d frames, codec=%s",
@@ -251,11 +282,11 @@ def get_video_info(path: str) -> VideoInfo:
             log.warning("ffprobe failed: %s", exc)
 
     # Final defaults
-    fps = fps or 30.0
-    width = width or 640
-    height = height or 480
+    fps = fps if fps > 0 else 30.0
+    width = width if width > 0 else 640
+    height = height if height > 0 else 480
 
-    duration = frame_count / fps if fps > 0 and frame_count > 0 else 0
+    duration = frame_count / fps if fps > 0 and frame_count > 0 else 0.0
 
     info = VideoInfo(
         path=path,
@@ -280,12 +311,14 @@ def read_frame(path: str, frame_idx: int) -> np.ndarray:
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
         raise IOError(f"Cannot open video: {path}")
-    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-    ret, frame = cap.read()
-    cap.release()
-    if not ret or frame is None:
-        raise IOError(f"Cannot read frame {frame_idx} from {path}")
-    return np.ascontiguousarray(frame)
+    try:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = cap.read()
+        if not ret or frame is None:
+            raise IOError(f"Cannot read frame {frame_idx} from {path}")
+        return np.ascontiguousarray(frame)
+    finally:
+        cap.release()
 
 
 def iter_frames(path: str) -> Generator[tuple[int, np.ndarray], None, None]:
@@ -307,4 +340,7 @@ def iter_frames(path: str) -> Generator[tuple[int, np.ndarray], None, None]:
 
 
 def _fourcc_to_str(code: int) -> str:
-    return "".join(chr((code >> (8 * i)) & 0xFF) for i in range(4))
+    try:
+        return "".join(chr((code >> (8 * i)) & 0xFF) for i in range(4))
+    except (ValueError, OverflowError):
+        return "unknown"

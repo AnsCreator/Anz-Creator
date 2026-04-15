@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Optional
 
 from utils.logger import log
 
@@ -69,7 +69,9 @@ def _find_ytdlp() -> str:
         os.environ.get("APPDATA", os.path.expanduser("~")),
         "Anz-Creator", "bin",
     )
-    app_ytdlp = os.path.join(app_bin_dir, "yt-dlp.exe" if os.name == "nt" else "yt-dlp")
+    app_ytdlp = os.path.join(
+        app_bin_dir, "yt-dlp.exe" if os.name == "nt" else "yt-dlp",
+    )
     if os.path.isfile(app_ytdlp):
         log.info("yt-dlp found in app folder: %s", app_ytdlp)
         return app_ytdlp
@@ -110,9 +112,15 @@ def _find_ytdlp() -> str:
         import requests
 
         if os.name == "nt":
-            url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+            url = (
+                "https://github.com/yt-dlp/yt-dlp/releases/"
+                "latest/download/yt-dlp.exe"
+            )
         else:
-            url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"
+            url = (
+                "https://github.com/yt-dlp/yt-dlp/releases/"
+                "latest/download/yt-dlp_linux"
+            )
 
         os.makedirs(app_bin_dir, exist_ok=True)
         tmp_path = app_ytdlp + ".part"
@@ -124,6 +132,11 @@ def _find_ytdlp() -> str:
         with open(tmp_path, "wb") as f:
             for chunk in resp.iter_content(chunk_size=256 * 1024):
                 f.write(chunk)
+
+        # Verify file is not empty
+        if os.path.getsize(tmp_path) == 0:
+            os.remove(tmp_path)
+            raise RuntimeError("Downloaded yt-dlp file is empty")
 
         os.rename(tmp_path, app_ytdlp)
 
@@ -137,9 +150,10 @@ def _find_ytdlp() -> str:
     except Exception as exc:
         log.error("Failed to download yt-dlp: %s", exc)
         # Clean up partial file
-        if os.path.exists(app_ytdlp + ".part"):
+        tmp_path = app_ytdlp + ".part"
+        if os.path.exists(tmp_path):
             try:
-                os.remove(app_ytdlp + ".part")
+                os.remove(tmp_path)
             except OSError:
                 pass
 
@@ -166,7 +180,8 @@ class Downloader:
     @staticmethod
     def fetch_metadata(url: str) -> VideoMeta:
         """
-        Fetch video metadata (no download) — title, duration, thumbnail, qualities.
+        Fetch video metadata (no download) — title, duration, thumbnail,
+        qualities.
         """
         url = _normalize_url(url)
         if not url:
@@ -192,15 +207,19 @@ class Downloader:
             raise RuntimeError("yt-dlp timed out fetching metadata. Try again.")
 
         if result.returncode != 0:
-            stderr = result.stderr.strip()
+            stderr = (result.stderr or "").strip()
             if "is not recognized" in stderr or "not found" in stderr:
                 raise RuntimeError(
                     "yt-dlp not found. Install with: pip install yt-dlp"
                 )
             raise RuntimeError(f"yt-dlp error: {stderr[:500]}")
 
+        stdout = (result.stdout or "").strip()
+        if not stdout:
+            raise RuntimeError("yt-dlp returned empty output.")
+
         try:
-            info = json.loads(result.stdout)
+            info = json.loads(stdout)
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"Failed to parse yt-dlp output: {exc}")
 
@@ -221,12 +240,17 @@ class Downloader:
 
         quality_map = {2160: "4K", 1080: "1080p", 720: "720p", 480: "480p"}
         meta.available_qualities = [
-            quality_map[h] for h in sorted(heights, reverse=True) if h in quality_map
+            quality_map[h]
+            for h in sorted(heights, reverse=True)
+            if h in quality_map
         ]
         if not meta.available_qualities:
             meta.available_qualities = ["best"]
 
-        log.info("Metadata: %s — %ds — %s", meta.title, meta.duration, meta.available_qualities)
+        log.info(
+            "Metadata: %s — %ds — %s",
+            meta.title, meta.duration, meta.available_qualities,
+        )
         return meta
 
     # ── download ─────────────────────────────────────────
@@ -235,8 +259,8 @@ class Downloader:
         url: str,
         output_dir: str,
         quality: str = "1080p",
-        progress_callback: Callable[[int, str], None] = None,
-        cancel_flag: Callable[[], bool] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
+        cancel_flag: Optional[Callable[[], bool]] = None,
     ) -> str:
         """
         Download video to output_dir. Returns path to downloaded file.
@@ -247,7 +271,9 @@ class Downloader:
         os.makedirs(output_dir, exist_ok=True)
         output_template = os.path.join(output_dir, "%(title).80s.%(ext)s")
 
-        height_map = {"4K": "2160", "1080p": "1080", "720p": "720", "480p": "480"}
+        height_map = {
+            "4K": "2160", "1080p": "1080", "720p": "720", "480p": "480",
+        }
         h = height_map.get(quality, "1080")
 
         cmd = [
@@ -293,7 +319,19 @@ class Downloader:
                 output_path = line.split("Destination:")[-1].strip()
             if "has already been downloaded" in line:
                 try:
-                    output_path = line.split("[download]")[-1].split("has already")[0].strip()
+                    output_path = (
+                        line.split("[download]")[-1]
+                        .split("has already")[0]
+                        .strip()
+                    )
+                except Exception:
+                    pass
+            # yt-dlp may also report merge destination
+            if "[Merger] Merging formats into" in line:
+                try:
+                    merge_path = line.split("into")[-1].strip().strip('"')
+                    if merge_path:
+                        output_path = merge_path
                 except Exception:
                     pass
 
@@ -302,10 +340,15 @@ class Downloader:
         # Fallback: find most recent .mp4 in output dir
         if not output_path or not os.path.isfile(output_path):
             try:
-                mp4_files = [f for f in os.listdir(output_dir) if f.endswith(".mp4")]
+                mp4_files = [
+                    f for f in os.listdir(output_dir)
+                    if f.endswith(".mp4")
+                ]
                 if mp4_files:
                     mp4_files.sort(
-                        key=lambda f: os.path.getmtime(os.path.join(output_dir, f)),
+                        key=lambda f: os.path.getmtime(
+                            os.path.join(output_dir, f)
+                        ),
                         reverse=True,
                     )
                     output_path = os.path.join(output_dir, mp4_files[0])
