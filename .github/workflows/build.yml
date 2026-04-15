@@ -9,7 +9,6 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  # Auto-increment version and create tag
   version:
     name: Auto Version Tag
     runs-on: ubuntu-latest
@@ -25,7 +24,6 @@ jobs:
         id: tag
         run: |
           LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
-
           if [ -z "$LATEST" ]; then
             NEW_TAG="v1.0.0.1"
           else
@@ -34,10 +32,8 @@ jobs:
             NEXT=$((BUILD + 1))
             NEW_TAG="${BASE}.${NEXT}"
           fi
-
           echo "Latest: $LATEST -> New: $NEW_TAG"
           echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
-
           if [ -n "$LATEST" ]; then
             CHANGELOG=$(git log ${LATEST}..HEAD --pretty=format:"- %s" --no-merges | head -20)
           else
@@ -55,7 +51,6 @@ jobs:
           git tag ${{ steps.tag.outputs.new_tag }}
           git push origin ${{ steps.tag.outputs.new_tag }}
 
-  # Build Windows Installer
   build-installer:
     name: Build Windows Installer
     runs-on: windows-latest
@@ -74,54 +69,28 @@ jobs:
       - name: Install NSIS
         run: choco install nsis -y --no-progress
 
-      - name: Install base dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install PyQt6 qt-material
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements.txt
+          pip install PyYAML yt-dlp opencv-python ultralytics numpy Pillow scenedetect requests
           pip install pyinstaller
 
       - name: Clone and install SAM2
         run: |
-          echo "Cloning SAM2 repository..."
           git clone --depth 1 https://github.com/facebookresearch/segment-anything-2.git
           cd segment-anything-2
           pip install -e .
           cd ..
-          echo "SAM2 installation complete."
 
       - name: Fix SAM2 symbolic links
         run: |
           $sam2Path = (python -c "import sam2; import os; print(os.path.dirname(sam2.__file__))")
-          Write-Host "SAM2 installed at: $sam2Path"
-          
           Get-ChildItem -Path $sam2Path -Recurse -File | ForEach-Object {
             if ($_.LinkType -eq "SymbolicLink") {
-              Write-Host "Found symlink: $($_.FullName)"
               Remove-Item $_.FullName -Force
-              
-              $configContent = @"
-          model:
-            name: sam2_hiera
-            encoder:
-              embed_dim: 112
-              num_heads: 2
-            decoder:
-              num_mask_tokens: 4
-          "@
-              $configContent | Out-File -FilePath $_.FullName -Encoding UTF8
-              Write-Host "  -> Created dummy config file"
-            }
-          }
-          
-          $sitePackages = python -c "import site; print(site.getsitepackages()[0])"
-          Get-ChildItem -Path $sitePackages -Filter "*.yaml" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-            if ($_.LinkType -eq "SymbolicLink") {
-              Write-Host "Found symlink in site-packages: $($_.FullName)"
-              Remove-Item $_.FullName -Force
-              "model:`n  name: sam2_hiera" | Out-File -FilePath $_.FullName -Encoding UTF8
-              Write-Host "  -> Created dummy config"
+              "model:`n  name: sam2_hiera`n  encoder:`n    embed_dim: 112`n    num_heads: 2`n  decoder:`n    num_mask_tokens: 4" | Out-File -FilePath $_.FullName -Encoding UTF8
             }
           }
 
@@ -131,91 +100,82 @@ jobs:
       - name: Write version file
         run: echo '${{ needs.version.outputs.new_tag }}' > version.txt
 
-            - name: Build with PyInstaller
+      - name: Build with PyInstaller
         run: |
-          pyinstaller --hidden-import PyQt6 --hidden-import PyQt6.QtCore --hidden-import PyQt6.QtGui --hidden-import PyQt6.QtWidgets --hidden-import qt_material anz_creator.spec --noconfirm
+          pyinstaller `
+            --name "Anz-Creator" `
+            --windowed `
+            --onefile `
+            --add-data "config.yaml;." `
+            --add-data "version.txt;." `
+            --hidden-import PyQt6 `
+            --hidden-import PyQt6.QtCore `
+            --hidden-import PyQt6.QtGui `
+            --hidden-import PyQt6.QtWidgets `
+            --hidden-import qt_material `
+            --hidden-import sam2 `
+            --hidden-import ultralytics `
+            --hidden-import torch `
+            --hidden-import cv2 `
+            --icon icon.ico `
+            main.py
 
-      - name: Prepare dist folder for NSIS
+      - name: Prepare dist folder
         run: |
           New-Item -ItemType Directory -Force -Path "installer_build"
-          if (Test-Path "dist\Anz-Creator") {
-            robocopy "dist\Anz-Creator" "installer_build" /E /COPY:DAT /R:0 /W:0 /NJH /NJS /NDL
-            if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE } else { $global:LASTEXITCODE = 0 }
-          } else {
-            Copy-Item -Path "dist\*.exe" -Destination "installer_build\" -Force
-          }
+          Copy-Item -Path "dist\Anz-Creator.exe" -Destination "installer_build\" -Force
           Copy-Item -Path "version.txt" -Destination "installer_build\" -Force
           Copy-Item -Path "config.yaml" -Destination "installer_build\" -Force
 
       - name: Create NSIS Script
         run: |
           $version = "${{ needs.version.outputs.new_tag }}".TrimStart('v')
-          $script = @"
+          @"
           !include "MUI2.nsh"
-          !include "FileFunc.nsh"
           Name "Anz-Creator"
           OutFile "release\Anz-Creator-Setup.exe"
           Unicode True
           InstallDir `$PROGRAMFILES64\Anz-Creator`
-          InstallDirRegKey HKLM "Software\Anz-Creator" "Install_Dir"
           RequestExecutionLevel admin
-          !define MUI_ABORTWARNING
           VIProductVersion "$version.0"
           VIAddVersionKey "ProductName" "Anz-Creator"
-          VIAddVersionKey "CompanyName" "AnzCreator"
-          VIAddVersionKey "FileDescription" "AI-powered Video Processing Toolkit"
           VIAddVersionKey "FileVersion" "$version"
-          VIAddVersionKey "LegalCopyright" "AnzCreator"
           !insertmacro MUI_PAGE_WELCOME
           !insertmacro MUI_PAGE_DIRECTORY
           !insertmacro MUI_PAGE_INSTFILES
           !insertmacro MUI_PAGE_FINISH
-          !insertmacro MUI_UNPAGE_CONFIRM
-          !insertmacro MUI_UNPAGE_INSTFILES
           !insertmacro MUI_LANGUAGE "English"
           Section "Install"
-            SectionIn RO
             SetOutPath `$INSTDIR`
-            WriteRegStr HKLM "Software\Anz-Creator" "Install_Dir" "`$INSTDIR"
             WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayName" "Anz-Creator"
             WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "UninstallString" '"`$INSTDIR\uninstall.exe"'
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayIcon" "`$INSTDIR\Anz-Creator.exe"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayVersion" "$version"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "Publisher" "AnzCreator"
             WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "NoModify" 1
-            WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "NoRepair" 1
-            File /r /x "*.pyc" /x "__pycache__" "installer_build\*"
+            File /r "installer_build\*"
             WriteUninstaller "`$INSTDIR\uninstall.exe"
             CreateDirectory "`$SMPROGRAMS\Anz-Creator"
             CreateShortcut "`$SMPROGRAMS\Anz-Creator\Anz-Creator.lnk" "`$INSTDIR\Anz-Creator.exe"
-            CreateShortcut "`$SMPROGRAMS\Anz-Creator\Uninstall.lnk" "`$INSTDIR\uninstall.exe"
             CreateShortcut "`$DESKTOP\Anz-Creator.lnk" "`$INSTDIR\Anz-Creator.exe"
           SectionEnd
           Section "Uninstall"
             Delete "`$DESKTOP\Anz-Creator.lnk"
-            Delete "`$SMPROGRAMS\Anz-Creator\*.lnk"
-            RMDir "`$SMPROGRAMS\Anz-Creator"
+            RMDir /r "`$SMPROGRAMS\Anz-Creator"
             RMDir /r "`$INSTDIR"
             DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator"
-            DeleteRegKey HKLM "Software\Anz-Creator"
           SectionEnd
-          "@
-          $script | Out-File -FilePath "setup.nsi" -Encoding ASCII
+          "@ | Out-File -FilePath "setup.nsi" -Encoding ASCII
 
-      - name: Build Installer with NSIS
+      - name: Build Installer
         run: |
           New-Item -ItemType Directory -Force -Path release
           & "C:\Program Files (x86)\NSIS\makensis.exe" setup.nsi
-          Get-ChildItem -Path release | Select-Object Name, @{Name="Size(MB)";Expression={[math]::Round($_.Length/1MB,2)}}
 
-      - name: Upload installer artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: Anz-Creator-Installer
           path: release/*.exe
           retention-days: 30
 
-  # Create GitHub Release
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
@@ -224,43 +184,33 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6
-
-      - name: Download artifact
-        uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v6
         with:
           name: Anz-Creator-Installer
           path: ./release
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.version.outputs.new_tag }}
           name: "Anz-Creator ${{ needs.version.outputs.new_tag }}"
           body: |
-            ## 🚀 Anz-Creator ${{ needs.version.outputs.new_tag }}
+            ## Anz-Creator ${{ needs.version.outputs.new_tag }}
             
-            ### 📝 Changes
+            ### Changes
             ${{ needs.version.outputs.changelog }}
             
-            ### ✨ Features
-            - 🔴 Watermark Removal - Auto YOLOv8 + Manual SAM2
-            - 🎬 ProPainter - Temporal-consistent video inpainting
-            - 📥 yt-dlp - Support 1000+ platforms
-            - 🎨 PyQt6 Dark UI - Modern material design
-            - ⚡ SAM2 Pre-installed - No manual setup
+            ### Features
+            - Watermark Removal (Auto YOLOv8 + Manual SAM2)
+            - ProPainter video inpainting
+            - yt-dlp support 1000+ platforms
+            - PyQt6 Dark UI
+            - SAM2 Pre-installed
             
-            ### 💻 System Requirements
+            ### Requirements
             - Windows 10/11 64-bit
             - 8GB RAM minimum
-            - NVIDIA GPU 4-12GB VRAM (recommended)
             
-            ### 📦 Installation
+            ### Installation
             1. Download Anz-Creator-Setup.exe
             2. Run as Administrator
-            3. Follow the setup wizard
-            
-            ### 🔧 Uninstall
-            Use Windows Add or Remove Programs or run uninstall.exe in installation folder.
+            3. Follow setup wizard
           files: ./release/*
-          draft: false
-          prerelease: false
