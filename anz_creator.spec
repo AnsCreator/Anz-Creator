@@ -1,28 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
-import sys
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
-
-# Add PyQt6 binary path
-from PyQt6 import QtCore
-qt_bin_path = os.path.dirname(QtCore.__file__).replace('Qt6', 'Qt6/bin')
 
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[
-        (os.path.join(qt_bin_path, 'Qt6Core.dll'), '.'),
-        (os.path.join(qt_bin_path, 'Qt6Gui.dll'), '.'),
-        (os.path.join(qt_bin_path, 'Qt6Widgets.dll'), '.'),
-        (os.path.join(qt_bin_path, 'Qt6Network.dll'), '.'),
-        (os.path.join(qt_bin_path, 'Qt6Svg.dll'), '.'),
-    ],
+    binaries=[],
     datas=[
         ('config.yaml', '.'),
         ('version.txt', '.'),
-    ] + collect_data_files('PyQt6') + collect_data_files('qt_material') + 
-        collect_data_files('sam2') + collect_data_files('ultralytics'),
+    ],
     hiddenimports=[
         'PyQt6',
         'PyQt6.QtCore',
@@ -35,25 +23,9 @@ a = Analysis(
         'sam2.build_sam',
         'sam2.sam2_image_predictor',
         'sam2.sam2_video_predictor',
-        'sam2.modeling',
-        'sam2.modeling.sam2_base',
-        'sam2.modeling.transformer',
-        'sam2.modeling.backbones',
-        'sam2.modeling.backbones.hieradet',
-        'sam2.modeling.backbones.image_encoder',
-        'sam2.modeling.memory_attention',
-        'sam2.modeling.memory_encoder',
-        'sam2.utils',
-        'sam2.utils.amg',
-        'sam2.utils.misc',
-        'sam2.utils.transforms',
         'ultralytics',
-        'ultralytics.nn.modules',
-        'ultralytics.data',
         'torch',
         'torchvision',
-        'torchvision.ops',
-        'torchvision.transforms',
         'cv2',
         'numpy',
         'PIL',
@@ -75,8 +47,6 @@ a = Analysis(
         'IPython',
         'tensorboard',
         'torch.utils.tensorboard',
-        'torch.cuda',
-        'nvidia',
     ],
     noarchive=False,
 )
