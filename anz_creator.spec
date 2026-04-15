@@ -1,17 +1,36 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
+import sys
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
+# Add PyQt6 binary path
+from PyQt6 import QtCore
+qt_bin_path = os.path.dirname(QtCore.__file__).replace('Qt6', 'Qt6/bin')
 
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[],
+    binaries=[
+        (os.path.join(qt_bin_path, 'Qt6Core.dll'), '.'),
+        (os.path.join(qt_bin_path, 'Qt6Gui.dll'), '.'),
+        (os.path.join(qt_bin_path, 'Qt6Widgets.dll'), '.'),
+        (os.path.join(qt_bin_path, 'Qt6Network.dll'), '.'),
+        (os.path.join(qt_bin_path, 'Qt6Svg.dll'), '.'),
+    ],
     datas=[
         ('config.yaml', '.'),
         ('version.txt', '.'),
-    ] + collect_data_files('sam2') + collect_data_files('ultralytics'),
+    ] + collect_data_files('PyQt6') + collect_data_files('qt_material') + 
+        collect_data_files('sam2') + collect_data_files('ultralytics'),
     hiddenimports=[
+        'PyQt6',
+        'PyQt6.QtCore',
+        'PyQt6.QtGui',
+        'PyQt6.QtWidgets',
+        'PyQt6.sip',
+        'qt_material',
+        'qt_material.resources',
         'sam2',
         'sam2.build_sam',
         'sam2.sam2_image_predictor',
