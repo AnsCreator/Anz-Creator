@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 
@@ -28,7 +29,7 @@ def setup_logger(name: str = "AnzCreator", log_dir: str = None) -> logging.Logge
     console.setFormatter(formatter)
     logger.addHandler(console)
 
-    # File handler
+    # File handler with rotation (max 10MB per file, keep 5 backups)
     if log_dir is None:
         log_dir = os.path.join(
             os.environ.get("APPDATA", os.path.expanduser("~")),
@@ -37,10 +38,18 @@ def setup_logger(name: str = "AnzCreator", log_dir: str = None) -> logging.Logge
     Path(log_dir).mkdir(parents=True, exist_ok=True)
     log_file = os.path.join(log_dir, f"anz_{datetime.now():%Y%m%d}.log")
 
-    file_handler = logging.FileHandler(log_file, encoding="utf-8")
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
+    try:
+        file_handler = RotatingFileHandler(
+            log_file, encoding="utf-8",
+            maxBytes=10 * 1024 * 1024,  # 10 MB
+            backupCount=5,
+        )
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+    except (OSError, PermissionError) as exc:
+        # If file logging fails (e.g. read-only), continue with console only
+        logger.warning("Cannot create log file %s: %s", log_file, exc)
 
     logger.info("Logger initialized — %s", log_file)
     return logger

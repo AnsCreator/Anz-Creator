@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from typing import Callable
+from typing import Callable, Optional
 
 from utils.logger import log
 
@@ -72,8 +72,8 @@ class FFmpegWrapper:
         video_path: str,
         output_dir: str,
         pattern: str = "frame_%06d.png",
-        progress_callback: Callable[[int, str], None] = None,
-        cancel_flag: Callable[[], bool] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
+        cancel_flag: Optional[Callable[[], bool]] = None,
     ) -> str:
         """
         Extract all frames as PNG images.
@@ -98,12 +98,14 @@ class FFmpegWrapper:
 
         try:
             proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace",
                 creationflags=cf, startupinfo=si,
             )
             for line in proc.stdout:
                 if cancel_flag and cancel_flag():
                     proc.kill()
+                    proc.wait()
                     return output_dir
             proc.wait()
 
@@ -133,8 +135,8 @@ class FFmpegWrapper:
         pattern: str = "frame_%06d.png",
         crf: int = 18,
         preset: str = "medium",
-        progress_callback: Callable[[int, str], None] = None,
-        cancel_flag: Callable[[], bool] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
+        cancel_flag: Optional[Callable[[], bool]] = None,
     ) -> str:
         """
         Rebuild video from frames, copying audio from original.
@@ -158,6 +160,7 @@ class FFmpegWrapper:
             "-crf", str(crf),
             "-preset", preset,
             "-pix_fmt", "yuv420p",
+            "-c:a", "aac",       # Ensure audio codec compatibility
             output_path,
         ]
 
@@ -167,12 +170,14 @@ class FFmpegWrapper:
 
         try:
             proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace",
                 creationflags=cf, startupinfo=si,
             )
             for line in proc.stdout:
                 if cancel_flag and cancel_flag():
                     proc.kill()
+                    proc.wait()
                     return ""
             proc.wait()
 
@@ -182,6 +187,9 @@ class FFmpegWrapper:
         except FileNotFoundError:
             log.error("FFmpeg not found: %s", ffmpeg)
             raise RuntimeError("FFmpeg not found.")
+
+        if not os.path.isfile(output_path):
+            raise RuntimeError(f"FFmpeg did not produce output file: {output_path}")
 
         if progress_callback:
             progress_callback(100, "Video rebuilt.")
@@ -205,8 +213,16 @@ class FFmpegWrapper:
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=10,
                 creationflags=cf, startupinfo=si,
+                encoding="utf-8", errors="replace",
             )
-            num, den = result.stdout.strip().split("/")
-            return float(num) / float(den)
+            if result.returncode != 0 or not result.stdout.strip():
+                return 30.0
+            parts = result.stdout.strip().split("/")
+            if len(parts) == 2:
+                num, den = parts
+                den_f = float(den)
+                if den_f > 0:
+                    return float(num) / den_f
+            return float(result.stdout.strip())
         except Exception:
             return 30.0
