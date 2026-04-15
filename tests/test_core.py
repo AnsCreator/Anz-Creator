@@ -12,6 +12,15 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def _has_module(module_name: str) -> bool:
+    """Check if a module can be imported."""
+    try:
+        __import__(module_name)
+        return True
+    except ImportError:
+        return False
+
+
 class TestSettings:
     """Test core.settings module."""
 
@@ -42,7 +51,6 @@ class TestSettings:
     def test_deep_merge_preserves_defaults(self):
         from core.settings import Settings
         s = Settings()
-        # Default values should be present even if settings file is empty
         assert s.get("ui.theme") == "dark_teal.xml"
         assert s.get("video.default_quality") == "1080p"
 
@@ -209,19 +217,21 @@ class TestWatermarkDetector:
 
     def test_opencv_fallback_exists(self):
         pytest.importorskip("cv2")
+        # Skip if torch not available (required for sam2 import chain)
+        if not _has_module("torch"):
+            pytest.skip("torch not installed")
         from features.watermark_removal.detector import WatermarkDetector
         assert hasattr(WatermarkDetector, "_opencv_fallback")
 
     def test_opencv_fallback_no_crash(self):
         pytest.importorskip("cv2")
+        if not _has_module("torch"):
+            pytest.skip("torch not installed")
         import numpy as np
-
         from features.watermark_removal.detector import WatermarkDetector
 
-        # Create a blank frame
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
         result = WatermarkDetector._opencv_fallback(frame)
-        # Should return None for blank frame (no watermark)
         assert result is None
 
 
