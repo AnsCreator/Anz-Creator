@@ -66,15 +66,16 @@ class VideoPreview(QLabel):
     redundant refits.
     """
 
-    def __init__(self, parent=None, min_h: int = 240):
+    def __init__(self, parent=None, min_h: int = 240, max_h: int = 400):
         super().__init__(parent)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumHeight(min_h)
-        # CRITICAL: Expanding policy prevents QLabel from requesting
-        # layout changes when pixmap is set, breaking the resize loop.
+        self.setMaximumHeight(max_h)
+        # Expanding horizontally, Fixed vertically — prevents the widget
+        # from growing unbounded inside a QScrollArea.
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
         )
         self.setStyleSheet(
             "background: #1a1a2e; border: 2px dashed #444; "
@@ -164,8 +165,8 @@ class ClickableFrame(VideoPreview):
     """Video preview that captures user click coordinates."""
     point_added = pyqtSignal(int, int)
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
+    def __init__(self, parent=None, min_h: int = 240, max_h: int = 400):
+        super().__init__(parent, min_h=min_h, max_h=max_h)
         self._points: list[tuple[int, int]] = []
         self._original_size: tuple[int, int] = (0, 0)
         self.setCursor(Qt.CursorShape.CrossCursor)
