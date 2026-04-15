@@ -60,6 +60,33 @@ class ModelManager:
         except (KeyError, TypeError):
             return 0
 
+    def _ensure_sam2_installed(self):
+    """Auto-install SAM2 if not present."""
+    try:
+        import sam2
+        return True
+    except ImportError:
+        log.info("SAM2 not found — installing automatically…")
+        import subprocess
+        import sys
+        
+        try:
+            # Try pip install from GitHub
+            subprocess.check_call([
+                sys.executable, "-m", "pip", "install", "-q",
+                "git+https://github.com/facebookresearch/segment-anything-2.git"
+            ], 
+            stdout=subprocess.DEVNULL, 
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            
+            log.info("SAM2 installed successfully.")
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            log.error("SAM2 auto-install failed: %s", e)
+            return False
+    
     def list_variants(self, family: str) -> list[dict]:
         """Return list of {name, description, size_mb, downloaded}."""
         try:
@@ -164,6 +191,28 @@ class ModelManager:
                 log.error("Download failed: %s", exc)
                 raise
 
+    def download(
+    self,
+    family: str,
+    variant: str,
+    progress_callback: Optional[Callable[[int, str], None]] = None,
+    cancel_flag: Optional[Callable[[], bool]] = None,
+) -> str:
+    """Download a model if not present. Returns local path."""
+    
+    # Auto-install SAM2 package if needed
+    if family == "sam2":
+        if progress_callback:
+            progress_callback(0, "Checking SAM2 installation…")
+        if not self._ensure_sam2_installed():
+            raise RuntimeError(
+                "Failed to install SAM2 automatically.\n"
+                "Please install manually:\n"
+                "  pip install git+https://github.com/facebookresearch/segment-anything-2.git"
+            )
+    
+    dest = self.model_path(family, variant)
+    
     def ensure_models(
         self,
         families: list[str],
