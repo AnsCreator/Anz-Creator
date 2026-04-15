@@ -31,9 +31,18 @@ class SidebarButton(QPushButton):
         self.setFixedHeight(44)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet("""
-            QPushButton { text-align: left; padding-left: 12px; border: none; border-radius: 8px; font-size: 13px; color: #b0bec5; background: transparent; }
-            QPushButton:hover { background: rgba(255,255,255,0.06); color: #e0e0e0; }
-            QPushButton:checked { background: rgba(0,191,165,0.15); color: #80cbc4; font-weight: bold; border-left: 3px solid #00bfa5; }
+            QPushButton {
+                text-align: left; padding-left: 12px; border: none;
+                border-radius: 8px; font-size: 13px; color: #b0bec5;
+                background: transparent;
+            }
+            QPushButton:hover {
+                background: rgba(255,255,255,0.06); color: #e0e0e0;
+            }
+            QPushButton:checked {
+                background: rgba(0,191,165,0.15); color: #80cbc4;
+                font-weight: bold; border-left: 3px solid #00bfa5;
+            }
         """)
 
 
@@ -41,18 +50,27 @@ class Sidebar(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedWidth(220)
-        self.setStyleSheet("QFrame { background: #0d1117; border-right: 1px solid #1e2a3a; }")
+        self.setStyleSheet(
+            "QFrame { background: #0d1117; "
+            "border-right: 1px solid #1e2a3a; }"
+        )
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 16, 10, 16)
         layout.setSpacing(4)
 
         title = QLabel("⚡ Anz-Creator")
-        title.setStyleSheet("font-size: 18px; font-weight: bold; color: #80cbc4; padding: 8px 4px 16px 4px; border: none;")
+        title.setStyleSheet(
+            "font-size: 18px; font-weight: bold; color: #80cbc4; "
+            "padding: 8px 4px 16px 4px; border: none;"
+        )
         layout.addWidget(title)
 
         self.version_label = QLabel("v1.0.0")
-        self.version_label.setStyleSheet("font-size: 10px; color: #546e7a; padding: 0 4px 12px 4px; border: none;")
+        self.version_label.setStyleSheet(
+            "font-size: 10px; color: #546e7a; "
+            "padding: 0 4px 12px 4px; border: none;"
+        )
         layout.addWidget(self.version_label)
 
         sep = QFrame()
@@ -62,7 +80,10 @@ class Sidebar(QFrame):
         layout.addSpacing(8)
 
         nav_label = QLabel("FEATURES")
-        nav_label.setStyleSheet("font-size: 10px; color: #546e7a; padding: 4px 4px; letter-spacing: 2px; border: none;")
+        nav_label.setStyleSheet(
+            "font-size: 10px; color: #546e7a; padding: 4px 4px; "
+            "letter-spacing: 2px; border: none;"
+        )
         layout.addWidget(nav_label)
 
         self.buttons: list[SidebarButton] = []
@@ -74,12 +95,18 @@ class Sidebar(QFrame):
 
         self.btn_placeholder1 = SidebarButton("Background Remove", "🖼️")
         self.btn_placeholder1.setEnabled(False)
-        self.btn_placeholder1.setStyleSheet(self.btn_placeholder1.styleSheet() + "QPushButton:disabled { color: #37474f; }")
+        self.btn_placeholder1.setStyleSheet(
+            self.btn_placeholder1.styleSheet()
+            + "QPushButton:disabled { color: #37474f; }"
+        )
         layout.addWidget(self.btn_placeholder1)
 
         self.btn_placeholder2 = SidebarButton("Video Enhance", "✨")
         self.btn_placeholder2.setEnabled(False)
-        self.btn_placeholder2.setStyleSheet(self.btn_placeholder2.styleSheet() + "QPushButton:disabled { color: #37474f; }")
+        self.btn_placeholder2.setStyleSheet(
+            self.btn_placeholder2.styleSheet()
+            + "QPushButton:disabled { color: #37474f; }"
+        )
         layout.addWidget(self.btn_placeholder2)
 
         layout.addStretch()
@@ -120,7 +147,9 @@ class AboutPanel(QWidget):
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         title = QLabel("⚡ Anz-Creator")
-        title.setStyleSheet("font-size: 28px; font-weight: bold; color: #80cbc4;")
+        title.setStyleSheet(
+            "font-size: 28px; font-weight: bold; color: #80cbc4;"
+        )
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
@@ -152,19 +181,17 @@ class AboutPanel(QWidget):
         layout.addSpacing(30)
 
         self.update_status = QLabel("")
-        self.update_status.setStyleSheet("font-size: 12px; color: #8b949e;")
+        self.update_status.setStyleSheet(
+            "font-size: 12px; color: #8b949e;"
+        )
         self.update_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.update_status.setWordWrap(True)
         layout.addWidget(self.update_status)
 
-        try:
-            from ui.components import ProgressPanel
-            self.update_progress = ProgressPanel()
-            self.update_progress.hide()
-            layout.addWidget(self.update_progress)
-        except ImportError:
-            self.update_progress = QLabel("Progress panel UI missing")
-            layout.addWidget(self.update_progress)
+        from ui.components import ProgressPanel
+        self.update_progress = ProgressPanel()
+        self.update_progress.hide()
+        layout.addWidget(self.update_progress)
 
         btn_row = QHBoxLayout()
         btn_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -199,7 +226,7 @@ class AboutPanel(QWidget):
 
             worker = Worker(_check)
             worker.signals.finished.connect(self._on_check_done)
-            worker.signals.error.connect(lambda e: self._on_check_error(e))
+            worker.signals.error.connect(self._on_check_error)
             TaskQueue().submit(worker)
         except Exception as e:
             self._on_check_error(str(e))
@@ -207,34 +234,46 @@ class AboutPanel(QWidget):
     def _on_check_done(self, result):
         self.check_btn.setEnabled(True)
         if result is None:
-            self.update_status.setText("<span style='color:#66bb6a'>✓ You're running the latest version.</span>")
+            self.update_status.setText(
+                "<span style='color:#66bb6a'>"
+                "✓ You're running the latest version.</span>"
+            )
             self.install_btn.hide()
         else:
             self._update_info = result
             size_mb = result.get("size", 0) / 1048576
-            self.update_status.setText(f"<span style='color:#ffa726'>⬆ Update available: <b>{result.get('tag','')}</b> ({size_mb:.0f} MB)</span>")
+            tag = result.get("tag", "")
+            self.update_status.setText(
+                f"<span style='color:#ffa726'>⬆ Update available: "
+                f"<b>{tag}</b> ({size_mb:.0f} MB)</span>"
+            )
             self.install_btn.show()
 
     def _on_check_error(self, err):
         self.check_btn.setEnabled(True)
-        self.update_status.setText(f"<span style='color:#ef5350'>Update check failed: {err}</span>")
+        self.update_status.setText(
+            f"<span style='color:#ef5350'>"
+            f"Update check failed: {err}</span>"
+        )
 
     def _install_update(self):
         if not self._update_info:
             return
 
         from PyQt6.QtWidgets import QMessageBox
+        tag = self._update_info.get("tag", "")
         reply = QMessageBox.question(
             self, "Install Update",
-            f"Download and install {self._update_info.get('tag','')}?\n\nThe application will restart after updating.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            f"Download and install {tag}?\n\n"
+            "The application will restart after updating.",
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
 
         self.install_btn.setEnabled(False)
-        if hasattr(self.update_progress, 'show'):
-            self.update_progress.show()
+        self.update_progress.show()
 
         try:
             from core.task_queue import TaskQueue, Worker
@@ -242,17 +281,24 @@ class AboutPanel(QWidget):
 
             url = self._update_info["url"]
 
-            def _download_and_apply(progress_callback=None, cancel_flag=None):
-                zip_path = download_update(url, progress_callback=progress_callback, cancel_flag=cancel_flag)
+            def _download_and_apply(
+                progress_callback=None, cancel_flag=None,
+            ):
+                zip_path = download_update(
+                    url,
+                    progress_callback=progress_callback,
+                    cancel_flag=cancel_flag,
+                )
                 if not zip_path:
                     return None
                 return apply_update(zip_path)
 
             worker = Worker(_download_and_apply)
-            if hasattr(self.update_progress, 'update_progress'):
-                worker.signals.progress.connect(self.update_progress.update_progress)
+            worker.signals.progress.connect(
+                self.update_progress.update_progress
+            )
             worker.signals.finished.connect(self._on_update_ready)
-            worker.signals.error.connect(lambda e: self._on_update_error(e))
+            worker.signals.error.connect(self._on_update_error)
             TaskQueue().submit(worker)
         except Exception as e:
             self._on_update_error(str(e))
@@ -261,23 +307,42 @@ class AboutPanel(QWidget):
         if not batch_path:
             self.update_status.setText("Update cancelled.")
             self.install_btn.setEnabled(True)
+            self.update_progress.hide()
             return
 
-        self.update_status.setText("<span style='color:#66bb6a'>✓ Update downloaded! Restarting…</span>")
+        self.update_status.setText(
+            "<span style='color:#66bb6a'>"
+            "✓ Update downloaded! Restarting…</span>"
+        )
         import subprocess
+        import sys
         if os.name == "nt":
-            subprocess.Popen(["cmd", "/c", batch_path], creationflags=subprocess.CREATE_NO_WINDOW)
+            # Launch batch script fully detached from our process.
+            # DETACHED_PROCESS ensures the batch script survives our exit.
+            DETACHED_PROCESS = 0x00000008
+            subprocess.Popen(
+                ["cmd", "/c", batch_path],
+                creationflags=DETACHED_PROCESS
+                | subprocess.CREATE_NO_WINDOW,
+                close_fds=True,
+            )
         else:
-            subprocess.Popen(["bash", batch_path])
+            subprocess.Popen(
+                ["bash", batch_path],
+                start_new_session=True,
+            )
 
-        from PyQt6.QtWidgets import QApplication
-        QApplication.quit()
+        # Force exit — QApplication.quit() alone doesn't fully terminate
+        # the process, leaving file locks on _MEI temp folders and DLLs.
+        log.info("Updater launched, forcing exit for update…")
+        sys.exit(0)
 
     def _on_update_error(self, err):
         self.install_btn.setEnabled(True)
-        if hasattr(self.update_progress, 'hide'):
-            self.update_progress.hide()
-        self.update_status.setText(f"<span style='color:#ef5350'>Update failed: {err}</span>")
+        self.update_progress.hide()
+        self.update_status.setText(
+            f"<span style='color:#ef5350'>Update failed: {err}</span>"
+        )
 
 
 class LogEmitter(QObject):
@@ -285,29 +350,37 @@ class LogEmitter(QObject):
 
 
 class _QtLogHandler(logging.Handler):
-    """Logging handler that writes to a QPlainTextEdit widget in a Thread-Safe way."""
+    """Logging handler that writes to QPlainTextEdit thread-safely."""
 
     def __init__(self, widget):
         super().__init__()
         self._widget = widget
         self._closed = False
-        self._is_rendering = False  # Strict Lock untuk GUI Main Thread
+        self._is_rendering = False
         self.emitter = LogEmitter()
 
-        # Route sinyal ke metode internal untuk difilter, BUKAN langsung ke UI
         self.emitter.log_signal.connect(
-            self._render_log_safely, Qt.ConnectionType.QueuedConnection
+            self._render_log_safely,
+            Qt.ConnectionType.QueuedConnection,
         )
 
     def close_handler(self):
         self._closed = True
+        try:
+            self.emitter.log_signal.disconnect(self._render_log_safely)
+        except (TypeError, RuntimeError):
+            pass
 
     def emit(self, record):
         if self._closed:
             return
         try:
             msg = self.format(record)
-            msg = msg.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            msg = (
+                msg.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+            )
             if record.levelno >= logging.ERROR:
                 color = "#f85149"
             elif record.levelno >= logging.WARNING:
@@ -317,18 +390,23 @@ class _QtLogHandler(logging.Handler):
             else:
                 color = "#6e7681"
 
-            self.emitter.log_signal.emit(f"<span style='color:{color}'>{msg}</span>")
+            self.emitter.log_signal.emit(
+                f"<span style='color:{color}'>{msg}</span>"
+            )
         except Exception:
             pass
 
-    # Fungsi ini dieksekusi 100% di Main Thread. Ini akan mencegah
-    # perulangan jika `appendHtml` memicu Qt untuk men-generate log internal baru.
     def _render_log_safely(self, msg):
+        """Executed on Main Thread. Prevents re-entry."""
         if self._closed or self._is_rendering:
             return
         self._is_rendering = True
         try:
-            self._widget.appendHtml(msg)
+            if self._widget is not None:
+                self._widget.appendHtml(msg)
+        except RuntimeError:
+            # Widget has been deleted
+            self._closed = True
         except Exception:
             pass
         finally:
@@ -346,7 +424,9 @@ class DebugPanel(QWidget):
 
         header_row = QHBoxLayout()
         title = QLabel("🐛  Debug Log")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #e0e0e0;")
+        title.setStyleSheet(
+            "font-size: 16px; font-weight: bold; color: #e0e0e0;"
+        )
         header_row.addWidget(title)
         header_row.addStretch()
 
@@ -367,11 +447,17 @@ class DebugPanel(QWidget):
         self.log_text.setReadOnly(True)
         self.log_text.setMaximumBlockCount(2000)
         self.log_text.setStyleSheet(
-            "QPlainTextEdit { background: #0d1117; color: #8b949e; font-family: 'Consolas', 'Courier New', monospace; font-size: 11px; border: 1px solid #30363d; border-radius: 6px; padding: 8px; }"
+            "QPlainTextEdit { background: #0d1117; color: #8b949e; "
+            "font-family: 'Consolas', 'Courier New', monospace; "
+            "font-size: 11px; border: 1px solid #30363d; "
+            "border-radius: 6px; padding: 8px; }"
         )
         layout.addWidget(self.log_text)
 
-        log_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Anz-Creator", "logs")
+        log_dir = os.path.join(
+            os.environ.get("APPDATA", os.path.expanduser("~")),
+            "Anz-Creator", "logs",
+        )
         path_label = QLabel(f"Log files: <code>{log_dir}</code>")
         path_label.setStyleSheet("font-size: 11px; color: #546e7a;")
         path_label.setWordWrap(True)
@@ -382,7 +468,10 @@ class DebugPanel(QWidget):
     def _install_handler(self):
         handler = _QtLogHandler(self.log_text)
         handler.setLevel(logging.DEBUG)
-        formatter = logging.Formatter("[%(asctime)s] %(levelname)-8s %(funcName)s — %(message)s", datefmt="%H:%M:%S")
+        formatter = logging.Formatter(
+            "[%(asctime)s] %(levelname)-8s %(funcName)s — %(message)s",
+            datefmt="%H:%M:%S",
+        )
         handler.setFormatter(formatter)
 
         logger = logging.getLogger("AnzCreator")
@@ -393,7 +482,10 @@ class DebugPanel(QWidget):
         if self._log_handler is not None:
             self._log_handler.close_handler()
             logger = logging.getLogger("AnzCreator")
-            logger.removeHandler(self._log_handler)
+            try:
+                logger.removeHandler(self._log_handler)
+            except Exception:
+                pass
             self._log_handler = None
 
     def _clear(self):
@@ -423,24 +515,34 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.sidebar)
 
         self.stack = QStackedWidget()
-        self.stack.setStyleSheet("QStackedWidget { background: #161b22; }")
+        self.stack.setStyleSheet(
+            "QStackedWidget { background: #161b22; }"
+        )
 
         self.watermark_panel = WatermarkRemovalPanel()
         self.settings_panel = SettingsPanel()
         self.about_panel = AboutPanel()
         self.debug_panel = DebugPanel()
 
-        self.stack.addWidget(self.watermark_panel)
-        self.stack.addWidget(self.settings_panel)
-        self.stack.addWidget(self.about_panel)
-        self.stack.addWidget(self.debug_panel)
+        self.stack.addWidget(self.watermark_panel)   # index 0
+        self.stack.addWidget(self.settings_panel)    # index 1
+        self.stack.addWidget(self.about_panel)       # index 2
+        self.stack.addWidget(self.debug_panel)       # index 3
 
         main_layout.addWidget(self.stack, 1)
 
-        self.sidebar.btn_watermark.clicked.connect(lambda: self.stack.setCurrentIndex(0))
-        self.sidebar.btn_settings.clicked.connect(lambda: self.stack.setCurrentIndex(1))
-        self.sidebar.btn_about.clicked.connect(lambda: self.stack.setCurrentIndex(2))
-        self.sidebar.btn_debug.clicked.connect(lambda: self.stack.setCurrentIndex(3))
+        self.sidebar.btn_watermark.clicked.connect(
+            lambda: self.stack.setCurrentIndex(0)
+        )
+        self.sidebar.btn_settings.clicked.connect(
+            lambda: self.stack.setCurrentIndex(1)
+        )
+        self.sidebar.btn_about.clicked.connect(
+            lambda: self.stack.setCurrentIndex(2)
+        )
+        self.sidebar.btn_debug.clicked.connect(
+            lambda: self.stack.setCurrentIndex(3)
+        )
 
         try:
             from core.updater import get_current_version
@@ -449,7 +551,10 @@ class MainWindow(QMainWindow):
             pass
 
         self.statusBar().showMessage("Ready")
-        self.statusBar().setStyleSheet("QStatusBar { background: #0d1117; color: #546e7a; border-top: 1px solid #1e2a3a; font-size: 11px; }")
+        self.statusBar().setStyleSheet(
+            "QStatusBar { background: #0d1117; color: #546e7a; "
+            "border-top: 1px solid #1e2a3a; font-size: 11px; }"
+        )
 
         log.info("MainWindow initialized.")
         self._startup_update_check()
@@ -464,25 +569,44 @@ class MainWindow(QMainWindow):
 
             def _on_result(result):
                 if result:
-                    self.statusBar().showMessage(f"Update available: {result.get('tag','')}  —  Go to About to install.", 15000)
+                    tag = result.get("tag", "")
+                    self.statusBar().showMessage(
+                        f"Update available: {tag}  —  "
+                        "Go to About to install.",
+                        15000,
+                    )
                     self.about_panel._update_info = result
                     size_mb = result.get("size", 0) / 1048576
-                    self.about_panel.update_status.setText(f"<span style='color:#ffa726'>⬆ Update available: <b>{result.get('tag','')}</b> ({size_mb:.0f} MB)</span>")
+                    self.about_panel.update_status.setText(
+                        f"<span style='color:#ffa726'>⬆ Update "
+                        f"available: <b>{tag}</b> "
+                        f"({size_mb:.0f} MB)</span>"
+                    )
                     self.about_panel.install_btn.show()
 
             worker = Worker(_check)
             worker.signals.finished.connect(_on_result)
+            worker.signals.error.connect(
+                lambda e: log.debug("Startup update check: %s", e)
+            )
             TaskQueue().submit(worker)
         except Exception as e:
-            log.warning(f"Startup update check failed: {e}")
+            log.warning("Startup update check failed: %s", e)
 
     def closeEvent(self, event):
-        if hasattr(self, 'debug_panel') and hasattr(self.debug_panel, 'remove_handler'):
-            self.debug_panel.remove_handler()
+        # Remove log handler first to prevent writes to deleted widget
+        try:
+            if hasattr(self, 'debug_panel'):
+                self.debug_panel.remove_handler()
+        except Exception:
+            pass
+
+        # Cancel all background tasks
         try:
             from core.task_queue import TaskQueue
             TaskQueue().cancel_all()
         except Exception:
             pass
+
         log.info("Application closing.")
         event.accept()
