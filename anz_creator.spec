@@ -1,7 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
-import sys
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 a = Analysis(
@@ -38,26 +37,14 @@ a = Analysis(
         'torchvision.transforms',
         'cv2',
         'numpy',
-        'numpy.core',
-        'numpy.lib',
-        'numpy.random',
         'PIL',
-        'PIL.Image',
-        'PIL.ImageDraw',
-        'PIL.ImageFont',
         'yaml',
         'requests',
         'scenedetect',
-        'scenedetect.detectors',
-        'scenedetect.scene_manager',
         'hydra',
-        'hydra._internal',
         'omegaconf',
-        'iopath',
-        'fvcore',
-        'yacs',
         'tqdm',
-    ] + collect_submodules('sam2') + collect_submodules('ultralytics'),
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -69,6 +56,8 @@ a = Analysis(
         'IPython',
         'tensorboard',
         'torch.utils.tensorboard',
+        'torch.cuda',
+        'nvidia',
     ],
     noarchive=False,
 )
