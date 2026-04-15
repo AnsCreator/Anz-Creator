@@ -131,8 +131,9 @@ jobs:
       - name: Write version file
         run: echo '${{ needs.version.outputs.new_tag }}' > version.txt
 
-      - name: Build with PyInstaller
-        run: pyinstaller anz_creator.spec --noconfirm
+            - name: Build with PyInstaller
+        run: |
+          pyinstaller --hidden-import PyQt6 --hidden-import PyQt6.QtCore --hidden-import PyQt6.QtGui --hidden-import PyQt6.QtWidgets --hidden-import qt_material anz_creator.spec --noconfirm
 
       - name: Prepare dist folder for NSIS
         run: |
