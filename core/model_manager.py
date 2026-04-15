@@ -1,14 +1,11 @@
 """
 Model Manager — auto-download, verify, and load AI models.
 Models persist in %APPDATA%/Anz-Creator/models/.
-Includes auto-install for SAM2 package.
 """
 
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
 import threading
 from pathlib import Path
 from typing import Callable, Optional
@@ -20,35 +17,6 @@ from utils.logger import log
 
 _APPDATA = os.environ.get("APPDATA", os.path.expanduser("~"))
 MODELS_ROOT = os.path.join(_APPDATA, "Anz-Creator", "models")
-
-
-def _ensure_sam2_installed() -> bool:
-    """Auto-install SAM2 if not present."""
-    try:
-        import sam2  # noqa: F401
-        return True
-    except ImportError:
-        log.info("SAM2 not found — attempting auto-install…")
-
-        # Try multiple install methods
-        methods = [
-            ["git+https://github.com/facebookresearch/segment-anything-2.git"],
-            ["--no-cache-dir", "git+https://github.com/facebookresearch/segment-anything-2.git"],
-        ]
-
-        for method in methods:
-            try:
-                cmd = [sys.executable, "-m", "pip", "install", "-q"] + method
-                creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-                subprocess.check_call(cmd, creationflags=creationflags)
-                log.info("SAM2 installed successfully.")
-                return True
-            except Exception as e:
-                log.warning(f"Install method failed: {e}")
-                continue
-
-        log.error("All SAM2 auto-install methods failed.")
-        return False
 
 
 class ModelManager:
@@ -129,18 +97,6 @@ class ModelManager:
         progress_callback(percent, message)
         Thread-safe: only one download per model at a time.
         """
-        # Auto-install SAM2 package if needed
-        if family == "sam2":
-            if progress_callback:
-                progress_callback(0, "Checking SAM2 installation…")
-            if not _ensure_sam2_installed():
-                raise RuntimeError(
-                    "Failed to install SAM2 automatically.\n\n"
-                    "Please install manually:\n"
-                    "1. Install Git from https://git-scm.com/\n"
-                    "2. Run: pip install git+https://github.com/facebookresearch/segment-anything-2.git"
-                )
-
         dest = self.model_path(family, variant)
         if self.is_downloaded(family, variant):
             log.info("Model already cached: %s", dest)
