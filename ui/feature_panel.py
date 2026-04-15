@@ -147,7 +147,7 @@ class WatermarkRemovalPanel(QWidget):
             "YOLOv8 automatically detects watermark position.\n"
             "Falls back to OpenCV analysis if confidence is low."
         ))
-        self.auto_preview = VideoPreview(min_h=180)
+        self.auto_preview = VideoPreview(min_h=180, max_h=360)
         auto_lay.addWidget(self.auto_preview)
 
         auto_btn_row = QHBoxLayout()
@@ -170,8 +170,7 @@ class WatermarkRemovalPanel(QWidget):
             "SAM2 will segment it with pixel-perfect accuracy "
             "and track across all frames."
         ))
-        self.click_frame = ClickableFrame()
-        self.click_frame.setMinimumHeight(240)
+        self.click_frame = ClickableFrame(min_h=240, max_h=400)
         self.click_frame.point_added.connect(self._on_point_added)
         manual_lay.addWidget(self.click_frame)
 
