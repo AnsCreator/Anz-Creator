@@ -77,12 +77,6 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller pillow
 
-      - name: Install SAM2 from GitHub
-        run: |
-          echo "Installing SAM2 from GitHub..."
-          pip install git+https://github.com/facebookresearch/segment-anything-2.git
-          echo "SAM2 installed successfully."
-
       - name: Verify SAM2 installation
         run: |
           python -c "import sam2; print('SAM2 imported successfully')"
