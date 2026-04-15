@@ -684,24 +684,13 @@ class WatermarkRemovalPanel(QWidget):
         self.cancel_btn.setEnabled(False)
         self._show_error("Pipeline Error", err)
 
-    # ── Download models ──────────────────────────────────
         # ── Download models ──────────────────────────────────
-    def _download_models(
-        self,
-        models: list[tuple[str, str]],
-        on_done=None,
-    ):
-        dlg = ModelDownloadDialog(self, title="Preparing Models")
+    def _download_models(self, models: list[tuple[str, str]], on_done=None):
+        dlg = ModelDownloadDialog(self, title="Downloading Models")
         dlg.show()
 
-        # Capture for closure
-        _models = list(models)
-        _on_done = on_done
-
         def _dl(progress_callback=None, cancel_flag=None):
-            for fam, var in _models:
-                if fam == "sam2" and progress_callback:
-                    progress_callback(10, "Installing SAM2 package (this may take 2-5 minutes)...")
+            for fam, var in models:
                 self.model_mgr.download(
                     fam, var,
                     progress_callback=progress_callback,
@@ -711,8 +700,8 @@ class WatermarkRemovalPanel(QWidget):
 
         def _on_finished(_result):
             dlg.close()
-            if _on_done:
-                _on_done()
+            if on_done:
+                on_done()
 
         def _on_error(e):
             dlg.close()
