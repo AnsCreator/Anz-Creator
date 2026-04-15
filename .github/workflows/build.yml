@@ -97,14 +97,6 @@ jobs:
         run: |
           echo '${{ needs.version.outputs.new_tag }}' > version.txt
 
-      - name: Check icon file
-        run: |
-          if (Test-Path "icon.ico") {
-            Write-Host "icon.ico found"
-          } else {
-            Write-Host "No icon.ico found"
-          }
-
       - name: Build with PyInstaller
         run: pyinstaller anz_creator.spec
 
@@ -121,16 +113,12 @@ jobs:
           
           Copy-Item -Path "version.txt" -Destination "installer_build\" -Force
           Copy-Item -Path "config.yaml" -Destination "installer_build\" -Force
-          
-          if (Test-Path "icon.ico") {
-            Copy-Item -Path "icon.ico" -Destination "installer_build\" -Force
-          }
 
       - name: Create NSIS Script
         run: |
           $version = "${{ needs.version.outputs.new_tag }}".TrimStart('v')
           
-          $script = @"
+          $script = @'
           ; Anz-Creator NSIS Installer Script
           
           ;--------------------------------
@@ -141,31 +129,28 @@ jobs:
           ;--------------------------------
           ; General
           Name "Anz-Creator"
-          OutFile "release\Anz-Creator-Setup-v$version.exe"
+          OutFile "release\Anz-Creator-Setup.exe"
           Unicode True
-          InstallDir "\$PROGRAMFILES64\Anz-Creator"
+          InstallDir "$PROGRAMFILES64\Anz-Creator"
           InstallDirRegKey HKLM "Software\Anz-Creator" "Install_Dir"
           RequestExecutionLevel admin
           
           ;--------------------------------
           ; Interface Settings
           !define MUI_ABORTWARNING
-          !define MUI_ICON "installer_build\icon.ico"
-          !define MUI_UNICON "installer_build\icon.ico"
           
           ;--------------------------------
           ; Version Information
-          VIProductVersion "$version.0"
+          VIProductVersion "${VERSION}.0"
           VIAddVersionKey "ProductName" "Anz-Creator"
           VIAddVersionKey "CompanyName" "AnzCreator"
           VIAddVersionKey "FileDescription" "AI-powered Video Processing Toolkit"
-          VIAddVersionKey "FileVersion" "$version"
+          VIAddVersionKey "FileVersion" "${VERSION}"
           VIAddVersionKey "LegalCopyright" "AnzCreator"
           
           ;--------------------------------
           ; Pages
           !insertmacro MUI_PAGE_WELCOME
-          !insertmacro MUI_PAGE_LICENSE "LICENSE"
           !insertmacro MUI_PAGE_DIRECTORY
           !insertmacro MUI_PAGE_INSTFILES
           !insertmacro MUI_PAGE_FINISH
@@ -181,49 +166,52 @@ jobs:
           ; Installer Section
           Section "Install"
             SectionIn RO
-            SetOutPath \$INSTDIR
+            SetOutPath "$INSTDIR"
             
             ; Write installation path
-            WriteRegStr HKLM "Software\Anz-Creator" "Install_Dir" "\$INSTDIR"
+            WriteRegStr HKLM "Software\Anz-Creator" "Install_Dir" "$INSTDIR"
             WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayName" "Anz-Creator"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "UninstallString" '"\$INSTDIR\uninstall.exe"'
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayIcon" "\$INSTDIR\Anz-Creator.exe"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayVersion" "$version"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "UninstallString" '"$INSTDIR\uninstall.exe"'
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayIcon" "$INSTDIR\Anz-Creator.exe"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayVersion" "${VERSION}"
             WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "Publisher" "AnzCreator"
             WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "NoModify" 1
             WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "NoRepair" 1
             
             ; Copy all files
-            File /r "installer_build\*.*"
+            File /r "installer_build\*"
             
             ; Create uninstaller
-            WriteUninstaller "\$INSTDIR\uninstall.exe"
+            WriteUninstaller "$INSTDIR\uninstall.exe"
             
             ; Create shortcuts
-            CreateDirectory "\$SMPROGRAMS\Anz-Creator"
-            CreateShortcut "\$SMPROGRAMS\Anz-Creator\Anz-Creator.lnk" "\$INSTDIR\Anz-Creator.exe" "" "\$INSTDIR\Anz-Creator.exe" 0
-            CreateShortcut "\$SMPROGRAMS\Anz-Creator\Uninstall.lnk" "\$INSTDIR\uninstall.exe" "" "\$INSTDIR\uninstall.exe" 0
-            CreateShortcut "\$DESKTOP\Anz-Creator.lnk" "\$INSTDIR\Anz-Creator.exe" "" "\$INSTDIR\Anz-Creator.exe" 0
+            CreateDirectory "$SMPROGRAMS\Anz-Creator"
+            CreateShortcut "$SMPROGRAMS\Anz-Creator\Anz-Creator.lnk" "$INSTDIR\Anz-Creator.exe"
+            CreateShortcut "$SMPROGRAMS\Anz-Creator\Uninstall.lnk" "$INSTDIR\uninstall.exe"
+            CreateShortcut "$DESKTOP\Anz-Creator.lnk" "$INSTDIR\Anz-Creator.exe"
           SectionEnd
           
           ;--------------------------------
           ; Uninstaller Section
           Section "Uninstall"
             ; Remove shortcuts
-            Delete "\$DESKTOP\Anz-Creator.lnk"
-            Delete "\$SMPROGRAMS\Anz-Creator\*.lnk"
-            RMDir "\$SMPROGRAMS\Anz-Creator"
+            Delete "$DESKTOP\Anz-Creator.lnk"
+            Delete "$SMPROGRAMS\Anz-Creator\*.lnk"
+            RMDir "$SMPROGRAMS\Anz-Creator"
             
             ; Remove files
-            RMDir /r "\$INSTDIR"
+            RMDir /r "$INSTDIR"
             
             ; Remove registry keys
             DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator"
             DeleteRegKey HKLM "Software\Anz-Creator"
           SectionEnd
-          "@
+          '@
           
-          $script | Out-File -FilePath "setup.nsi" -Encoding UTF8
+          # Replace version placeholder
+          $script = $script -replace '\$\{VERSION\}', $version
+          
+          $script | Out-File -FilePath "setup.nsi" -Encoding ASCII
           Write-Host "NSIS script created"
 
       - name: Build Installer with NSIS
@@ -280,7 +268,7 @@ jobs:
             - NVIDIA GPU 4-12GB VRAM (recommended)
             
             ### 📦 Installation
-            1. Download `Anz-Creator-Setup-v*.exe`
+            1. Download `Anz-Creator-Setup.exe`
             2. Run as Administrator
             3. Follow the setup wizard
             
