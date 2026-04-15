@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QSize, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QMouseEvent, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QDialog,
@@ -54,19 +54,20 @@ class ProgressPanel(QWidget):
 
 # ── Video Preview Widget ────────────────────────────────
 class VideoPreview(QLabel):
-    """Display a video thumbnail with aspect ratio preservation. Pixmap-only."""
+    """Display a video thumbnail with aspect ratio preservation."""
 
     def __init__(self, parent=None, min_h: int = 240):
         super().__init__(parent)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumHeight(min_h)
         self.setStyleSheet(
-            "background: #1a1a2e; border: 2px dashed #444; border-radius: 8px;"
+            "background: #1a1a2e; border: 2px dashed #444; "
+            "border-radius: 8px;"
         )
         self.setText("No video loaded")
         self._pixmap: Optional[QPixmap] = None
         self._fitting = False
-        self._resize_timer = None
+        self._resize_timer: Optional[QTimer] = None
 
     def set_pixmap_direct(self, pixmap: QPixmap):
         """Set pixmap directly. This is the ONLY way to set the preview."""
@@ -92,7 +93,6 @@ class VideoPreview(QLabel):
         """Debounce fit calls to prevent recursion."""
         if self._fitting:
             return
-        from PyQt6.QtCore import QTimer
         if self._resize_timer is None:
             self._resize_timer = QTimer(self)
             self._resize_timer.setSingleShot(True)
@@ -106,13 +106,11 @@ class VideoPreview(QLabel):
         self._fitting = True
         try:
             if self._pixmap is None or self._pixmap.isNull():
-                self._fitting = False
                 return
 
             w = self.width()
             h = self.height()
             if w <= 0 or h <= 0:
-                self._fitting = False
                 return
 
             scaled = self._pixmap.scaled(
@@ -133,7 +131,7 @@ class VideoPreview(QLabel):
         super().resizeEvent(event)
 
     def setPixmap(self, pixmap):
-        """Override to prevent external setPixmap calls from causing issues."""
+        """Override to prevent external setPixmap from causing issues."""
         if self._fitting:
             super().setPixmap(pixmap)
 
@@ -146,10 +144,11 @@ class ClickableFrame(VideoPreview):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._points: list[tuple[int, int]] = []
-        self._original_size = (0, 0)
+        self._original_size: tuple[int, int] = (0, 0)
         self.setCursor(Qt.CursorShape.CrossCursor)
         self.setStyleSheet(
-            "background: #1a1a2e; border: 2px solid #00bfa5; border-radius: 8px;"
+            "background: #1a1a2e; border: 2px solid #00bfa5; "
+            "border-radius: 8px;"
         )
         self._drawing = False
 
@@ -168,28 +167,36 @@ class ClickableFrame(VideoPreview):
 
     def mousePressEvent(self, event: QMouseEvent):
         try:
-            cond1 = self._pixmap and not self._pixmap.isNull()
-            cond2 = event.button() == Qt.MouseButton.LeftButton
-            if cond1 and cond2:
-                current_pm = self.pixmap()
-                if current_pm is None or current_pm.isNull():
-                    return
+            if not (self._pixmap and not self._pixmap.isNull()):
+                return
+            if event.button() != Qt.MouseButton.LeftButton:
+                return
 
-                x_off = (self.width() - current_pm.width()) // 2
-                y_off = (self.height() - current_pm.height()) // 2
-                cx = event.pos().x() - x_off
-                cy = event.pos().y() - y_off
+            current_pm = self.pixmap()
+            if current_pm is None or current_pm.isNull():
+                return
 
-                if 0 <= cx < current_pm.width() and 0 <= cy < current_pm.height():
-                    ow, oh = self._original_size
-                    if ow > 0 and oh > 0:
-                        ox = int(cx / current_pm.width() * ow)
-                        oy = int(cy / current_pm.height() * oh)
-                        ox = max(0, min(ow - 1, ox))
-                        oy = max(0, min(oh - 1, oy))
-                        self._points.append((ox, oy))
-                        self.point_added.emit(ox, oy)
-                        self._redraw_points()
+            x_off = (self.width() - current_pm.width()) // 2
+            y_off = (self.height() - current_pm.height()) // 2
+            cx = int(event.pos().x()) - x_off
+            cy = int(event.pos().y()) - y_off
+
+            if not (0 <= cx < current_pm.width()):
+                return
+            if not (0 <= cy < current_pm.height()):
+                return
+
+            ow, oh = self._original_size
+            if ow <= 0 or oh <= 0:
+                return
+
+            ox = int(cx / current_pm.width() * ow)
+            oy = int(cy / current_pm.height() * oh)
+            ox = max(0, min(ow - 1, ox))
+            oy = max(0, min(oh - 1, oy))
+            self._points.append((ox, oy))
+            self.point_added.emit(ox, oy)
+            self._redraw_points()
         except Exception:
             pass
 
@@ -200,23 +207,19 @@ class ClickableFrame(VideoPreview):
         self._drawing = True
         try:
             if not self._pixmap or self._pixmap.isNull():
-                self._drawing = False
                 return
 
             ow, oh = self._original_size
             if ow <= 0 or oh <= 0:
-                self._drawing = False
                 return
 
             base_pm = QPixmap(self._pixmap)
             if base_pm.isNull():
-                self._drawing = False
                 return
 
             w = self.width()
             h = self.height()
             if w <= 0 or h <= 0:
-                self._drawing = False
                 return
 
             scaled_pm = base_pm.scaled(
@@ -225,7 +228,6 @@ class ClickableFrame(VideoPreview):
                 Qt.TransformationMode.SmoothTransformation,
             )
             if scaled_pm.isNull():
-                self._drawing = False
                 return
 
             painter = QPainter(scaled_pm)
@@ -280,7 +282,9 @@ class FileDropZone(QFrame):
         layout = QVBoxLayout(self)
         self._label = QLabel("📂  Drag & drop video here  or  Browse")
         self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._label.setStyleSheet("color: #aaa; font-size: 13px; border: none;")
+        self._label.setStyleSheet(
+            "color: #aaa; font-size: 13px; border: none;"
+        )
         layout.addWidget(self._label)
 
         btn = QPushButton("Browse Files")
@@ -300,8 +304,8 @@ class FileDropZone(QFrame):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
             self.setStyleSheet(
-                "QFrame { border: 2px solid #00bfa5; border-radius: 10px; "
-                "background: #263238; }"
+                "QFrame { border: 2px solid #00bfa5; "
+                "border-radius: 10px; background: #263238; }"
             )
 
     def dragLeaveEvent(self, event):
@@ -340,7 +344,9 @@ class ModelDownloadDialog(QDialog):
         layout.addWidget(self.progress)
 
         self.cancel_btn = QPushButton("Cancel")
-        layout.addWidget(self.cancel_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        layout.addWidget(
+            self.cancel_btn, alignment=Qt.AlignmentFlag.AlignRight,
+        )
 
     def update(self, percent: int, message: str):
         self.progress.update_progress(percent, message)
