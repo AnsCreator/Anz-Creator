@@ -3,9 +3,9 @@ from .logger import log  # noqa: F401
 
 def pip_install(package: str, quiet: bool = True) -> bool:
     """Install a pip package programmatically."""
+    import os
     import subprocess
     import sys
-    import os
 
     try:
         cmd = [sys.executable, "-m", "pip", "install"]
