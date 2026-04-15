@@ -71,6 +71,9 @@ jobs:
       - name: Install Git
         run: choco install git -y --no-progress
 
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
       - name: Install base dependencies
         run: |
           python -m pip install --upgrade pip
@@ -87,10 +90,6 @@ jobs:
           cd ..
           echo "SAM2 installation complete."
 
-      - name: Verify SAM2 installation
-        run: |
-          python -c "import sam2; print('SAM2 imported successfully')"
-
       - name: Install FFmpeg
         run: choco install ffmpeg -y --no-progress
 
@@ -103,7 +102,7 @@ jobs:
           if (Test-Path "icon.ico") {
             Write-Host "icon.ico found"
           } else {
-            Write-Host "No icon.ico found, installer will use default"
+            Write-Host "No icon.ico found"
           }
 
       - name: Build with PyInstaller
@@ -126,84 +125,111 @@ jobs:
           if (Test-Path "icon.ico") {
             Copy-Item -Path "icon.ico" -Destination "installer_build\" -Force
           }
-          
-          Write-Host "Dist folder prepared:"
-          Get-ChildItem -Path "installer_build" | Select-Object Name
 
-      - name: Install Inno Setup
-        run: choco install innosetup -y --no-progress
-
-      - name: Create Inno Setup Script
+      - name: Create NSIS Script
         run: |
           $version = "${{ needs.version.outputs.new_tag }}".TrimStart('v')
-          $appName = "Anz-Creator"
-          $publisher = "AnzCreator"
-          $url = "https://github.com/AnsCreator/Anz-Creator"
-          
-          $iconLine = if (Test-Path "installer_build\icon.ico") {
-            "SetupIconFile=installer_build\icon.ico"
-          } else {
-            ""
-          }
           
           $script = @"
-          #define AppName "$appName"
-          #define AppVersion "$version"
-          #define AppPublisher "$publisher"
-          #define AppURL "$url"
-          #define AppExeName "Anz-Creator.exe"
+          ; Anz-Creator NSIS Installer Script
           
-          [Setup]
-          AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
-          AppName={#AppName}
-          AppVersion={#AppVersion}
-          AppPublisher={#AppPublisher}
-          AppPublisherURL={#AppURL}
-          AppSupportURL={#AppURL}
-          AppUpdatesURL={#AppURL}
-          DefaultDirName={autopf}\{#AppName}
-          DefaultGroupName={#AppName}
-          AllowNoIcons=yes
-          LicenseFile=LICENSE
-          OutputDir=release
-          OutputBaseFilename=Anz-Creator-Setup-v{#AppVersion}
-          $iconLine
-          Compression=lzma2/max
-          SolidCompression=yes
-          WizardStyle=modern
-          PrivilegesRequired=lowest
-          PrivilegesRequiredOverridesAllowed=dialog
-          ArchitecturesAllowed=x64
-          ArchitecturesInstallIn64BitMode=x64
-          MinVersion=10.0
+          ;--------------------------------
+          ; Includes
+          !include "MUI2.nsh"
+          !include "FileFunc.nsh"
           
-          [Languages]
-          Name: "english"; MessagesFile: "compiler:Default.isl"
+          ;--------------------------------
+          ; General
+          Name "Anz-Creator"
+          OutFile "release\Anz-Creator-Setup-v$version.exe"
+          Unicode True
+          InstallDir "\$PROGRAMFILES64\Anz-Creator"
+          InstallDirRegKey HKLM "Software\Anz-Creator" "Install_Dir"
+          RequestExecutionLevel admin
           
-          [Tasks]
-          Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+          ;--------------------------------
+          ; Interface Settings
+          !define MUI_ABORTWARNING
+          !define MUI_ICON "installer_build\icon.ico"
+          !define MUI_UNICON "installer_build\icon.ico"
           
-          [Files]
-          Source: "installer_build\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-          Source: "installer_build\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+          ;--------------------------------
+          ; Version Information
+          VIProductVersion "$version.0"
+          VIAddVersionKey "ProductName" "Anz-Creator"
+          VIAddVersionKey "CompanyName" "AnzCreator"
+          VIAddVersionKey "FileDescription" "AI-powered Video Processing Toolkit"
+          VIAddVersionKey "FileVersion" "$version"
+          VIAddVersionKey "LegalCopyright" "AnzCreator"
           
-          [Icons]
-          Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
-          Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
-          Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+          ;--------------------------------
+          ; Pages
+          !insertmacro MUI_PAGE_WELCOME
+          !insertmacro MUI_PAGE_LICENSE "LICENSE"
+          !insertmacro MUI_PAGE_DIRECTORY
+          !insertmacro MUI_PAGE_INSTFILES
+          !insertmacro MUI_PAGE_FINISH
           
-          [Run]
-          Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+          !insertmacro MUI_UNPAGE_CONFIRM
+          !insertmacro MUI_UNPAGE_INSTFILES
+          
+          ;--------------------------------
+          ; Languages
+          !insertmacro MUI_LANGUAGE "English"
+          
+          ;--------------------------------
+          ; Installer Section
+          Section "Install"
+            SectionIn RO
+            SetOutPath \$INSTDIR
+            
+            ; Write installation path
+            WriteRegStr HKLM "Software\Anz-Creator" "Install_Dir" "\$INSTDIR"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayName" "Anz-Creator"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "UninstallString" '"\$INSTDIR\uninstall.exe"'
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayIcon" "\$INSTDIR\Anz-Creator.exe"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayVersion" "$version"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "Publisher" "AnzCreator"
+            WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "NoModify" 1
+            WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "NoRepair" 1
+            
+            ; Copy all files
+            File /r "installer_build\*.*"
+            
+            ; Create uninstaller
+            WriteUninstaller "\$INSTDIR\uninstall.exe"
+            
+            ; Create shortcuts
+            CreateDirectory "\$SMPROGRAMS\Anz-Creator"
+            CreateShortcut "\$SMPROGRAMS\Anz-Creator\Anz-Creator.lnk" "\$INSTDIR\Anz-Creator.exe" "" "\$INSTDIR\Anz-Creator.exe" 0
+            CreateShortcut "\$SMPROGRAMS\Anz-Creator\Uninstall.lnk" "\$INSTDIR\uninstall.exe" "" "\$INSTDIR\uninstall.exe" 0
+            CreateShortcut "\$DESKTOP\Anz-Creator.lnk" "\$INSTDIR\Anz-Creator.exe" "" "\$INSTDIR\Anz-Creator.exe" 0
+          SectionEnd
+          
+          ;--------------------------------
+          ; Uninstaller Section
+          Section "Uninstall"
+            ; Remove shortcuts
+            Delete "\$DESKTOP\Anz-Creator.lnk"
+            Delete "\$SMPROGRAMS\Anz-Creator\*.lnk"
+            RMDir "\$SMPROGRAMS\Anz-Creator"
+            
+            ; Remove files
+            RMDir /r "\$INSTDIR"
+            
+            ; Remove registry keys
+            DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator"
+            DeleteRegKey HKLM "Software\Anz-Creator"
+          SectionEnd
           "@
           
-          $script | Out-File -FilePath "setup.iss" -Encoding UTF8
-          Write-Host "Inno Setup script created:"
-          Get-Content "setup.iss"
+          $script | Out-File -FilePath "setup.nsi" -Encoding UTF8
+          Write-Host "NSIS script created"
 
-      - name: Build Installer with Inno Setup
+      - name: Build Installer with NSIS
         run: |
           New-Item -ItemType Directory -Force -Path release
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss
+          & "C:\Program Files (x86)\NSIS\makensis.exe" setup.nsi
           Write-Host "Installer built:"
           Get-ChildItem -Path release | Select-Object Name, @{Name="Size(MB)";Expression={[math]::Round($_.Length/1MB,2)}}
 
@@ -230,9 +256,6 @@ jobs:
           name: Anz-Creator-Installer
           path: ./release
 
-      - name: List files
-        run: ls -la ./release/
-
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -247,29 +270,22 @@ jobs:
             ### ✨ Features
             - 🔴 **Watermark Removal** - Auto (YOLOv8) + Manual (SAM2)
             - 🎬 **ProPainter** - Temporal-consistent video inpainting
-            - 📥 **yt-dlp** - Support 1000+ platforms (YouTube, TikTok, etc.)
+            - 📥 **yt-dlp** - Support 1000+ platforms
             - 🎨 **PyQt6 Dark UI** - Modern material design
             - ⚡ **SAM2 Pre-installed** - No manual setup!
             
             ### 💻 System Requirements
             - Windows 10/11 64-bit
-            - 8GB RAM minimum (16GB recommended)
-            - NVIDIA GPU 4-12GB VRAM (for best performance)
-            - 5GB free disk space
+            - 8GB RAM minimum
+            - NVIDIA GPU 4-12GB VRAM (recommended)
             
             ### 📦 Installation
             1. Download `Anz-Creator-Setup-v*.exe`
-            2. Run the installer
+            2. Run as Administrator
             3. Follow the setup wizard
-            4. Launch from desktop shortcut or Start Menu
-            
-            ### 🎯 First Run
-            - yt-dlp, FFmpeg, and AI models auto-download on first use
-            - Models stored in `%APPDATA%\Anz-Creator\models\`
-            - Settings saved in `%APPDATA%\Anz-Creator\settings.yaml`
             
             ### 🔧 Uninstall
-            Use Windows "Add or Remove Programs" or run `Uninstall Anz-Creator` from Start Menu.
+            Use Windows "Add or Remove Programs" or run `uninstall.exe` in installation folder.
           files: ./release/*
           draft: false
           prerelease: false
