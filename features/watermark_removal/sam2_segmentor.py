@@ -1,141 +1,21 @@
 """
 SAM2 Segmentor — Manual mode for pixel-perfect watermark segmentation.
 User clicks on watermark → SAM2 segments + propagates across frames.
-Includes auto-install fallback with better error handling.
 """
 
 from __future__ import annotations
 
-import importlib
 import os
-import shutil
-import subprocess
-import sys
-import tempfile
 from typing import Callable, Optional
 
 import cv2
 import numpy as np
+import torch
+from sam2.build_sam import build_sam2
+from sam2.sam2_image_predictor import SAM2ImagePredictor
+from sam2.sam2_video_predictor import SAM2VideoPredictor
 
 from utils.logger import log
-
-
-def _is_frozen() -> bool:
-    """Check if running as PyInstaller bundle."""
-    return getattr(sys, 'frozen', False)
-
-
-def _get_python_executable() -> str:
-    """Get the appropriate Python executable."""
-    if _is_frozen():
-        # In PyInstaller, check if system Python is available
-        python_candidates = ["python", "python3", "py"]
-        for candidate in python_candidates:
-            exe = shutil.which(candidate)
-            if exe:
-                return exe
-        # Fallback to current executable (won't work for pip)
-        return sys.executable
-    else:
-        return sys.executable
-
-
-def _pip_install_sam2() -> tuple[bool, str]:
-    """Auto-install SAM2 package. Returns (success, error_message)."""
-
-    if _is_frozen():
-        log.warning("Running in PyInstaller bundle - cannot auto-install packages.")
-        return False, "Running as compiled executable. Please install SAM2 manually."
-
-    log.info("Attempting to install SAM2 from GitHub...")
-
-    python_exe = _get_python_executable()
-
-    # Multiple fallback installation methods
-    methods = [
-        # Method 1: Direct GitHub install
-        [python_exe, "-m", "pip", "install", "-q", "git+https://github.com/facebookresearch/segment-anything-2.git"],
-        # Method 2: With --no-cache-dir
-        [python_exe, "-m", "pip", "install", "-q", "--no-cache-dir", "git+https://github.com/facebookresearch/segment-anything-2.git"],
-        # Method 3: Clone then install (more reliable)
-        None,  # Special handling below
-    ]
-
-    for i, method in enumerate(methods):
-        try:
-            if method is None:
-                # Method 3: Clone and install locally
-                log.info("Trying clone-and-install method...")
-                temp_dir = tempfile.mkdtemp(prefix="sam2_install_")
-                try:
-                    # Clone repository
-                    clone_cmd = ["git", "clone", "--depth", "1",
-                                 "https://github.com/facebookresearch/segment-anything-2.git",
-                                 temp_dir]
-                    creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-                    subprocess.check_call(clone_cmd, creationflags=creationflags)
-
-                    # Install from local clone
-                    install_cmd = [python_exe, "-m", "pip", "install", "-q", temp_dir]
-                    subprocess.check_call(install_cmd, creationflags=creationflags)
-
-                    log.info("SAM2 installed successfully via clone method.")
-                    return True, ""
-                finally:
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-            else:
-                creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-                log.info(f"Install attempt {i+1}: {' '.join(method)}")
-                subprocess.check_call(method, creationflags=creationflags)
-                log.info("SAM2 installed successfully.")
-                return True, ""
-
-        except subprocess.CalledProcessError as e:
-            log.warning(f"Install method {i+1} failed: {e}")
-            continue
-        except FileNotFoundError as e:
-            if "git" in str(e).lower():
-                return False, "Git is not installed. Please install Git from https://git-scm.com/"
-            continue
-        except Exception as e:
-            log.warning(f"Install method {i+1} failed: {e}")
-            continue
-
-    return False, "All installation methods failed. Please install manually."
-
-
-def _check_sam2_import() -> bool:
-    """Check if SAM2 can be imported."""
-    try:
-        import torch  # noqa: F401
-        from sam2.build_sam import build_sam2  # noqa: F401
-        from sam2.sam2_image_predictor import SAM2ImagePredictor  # noqa: F401
-        from sam2.sam2_video_predictor import SAM2VideoPredictor  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
-def _get_install_instructions() -> str:
-    """Get platform-specific installation instructions."""
-    if _is_frozen():
-        return (
-            "You are running the compiled executable version.\n"
-            "SAM2 must be installed in your system Python environment.\n\n"
-            "Please open a Command Prompt / Terminal and run:\n\n"
-            "  pip install git+https://github.com/facebookresearch/segment-anything-2.git\n\n"
-            "After installation, restart Anz-Creator."
-        )
-    else:
-        return (
-            "Please install SAM2 manually:\n\n"
-            "1. Install Git from https://git-scm.com/\n"
-            "2. Run: pip install git+https://github.com/facebookresearch/segment-anything-2.git\n\n"
-            "Or clone and install:\n"
-            "  git clone https://github.com/facebookresearch/segment-anything-2.git\n"
-            "  cd segment-anything-2\n"
-            "  pip install -e ."
-        )
 
 
 class SAM2Segmentor:
@@ -156,53 +36,7 @@ class SAM2Segmentor:
         if self._predictor is not None:
             return
 
-        # Check if SAM2 is importable
-        if not _check_sam2_import():
-            if _is_frozen():
-                # Running as exe - cannot auto-install
-                raise RuntimeError(
-                    "SAM2 is not installed in your system Python environment.\n\n"
-                    + _get_install_instructions()
-                )
-
-            # Not frozen - try auto-install
-            log.warning("SAM2 not installed — attempting auto-install…")
-            success, error_msg = _pip_install_sam2()
-
-            if not success:
-                error_detail = error_msg or "Auto-install failed"
-                raise RuntimeError(
-                    f"SAM2 is not installed and auto-install failed.\n\n"
-                    f"Error: {error_detail}\n\n"
-                    + _get_install_instructions()
-                )
-
-            # Clear import cache and retry
-            log.info("SAM2 installed. Clearing import cache...")
-            modules_to_clear = [m for m in sys.modules if m.startswith('sam2')]
-            for m in modules_to_clear:
-                del sys.modules[m]
-            importlib.invalidate_caches()
-            log.info("Import cache cleared. Retrying import...")
-
-            # Check again after install
-            if not _check_sam2_import():
-                raise RuntimeError(
-                    "SAM2 installation succeeded but import still fails.\n"
-                    "This may be due to environment mismatch.\n\n"
-                    + _get_install_instructions()
-                )
-
         log.info("Loading SAM2 from %s on %s", self.model_path, self.device)
-
-        # Now do the actual imports for use
-        import torch
-        from sam2.build_sam import build_sam2
-        from sam2.sam2_image_predictor import SAM2ImagePredictor
-        from sam2.sam2_video_predictor import SAM2VideoPredictor
-
-        # Store torch for later use
-        self._torch = torch
 
         # Use appropriate config based on model variant
         model_cfg = "sam2_hiera_b+.yaml"  # default for base+
@@ -313,7 +147,7 @@ class SAM2Segmentor:
         state = self._video_predictor.init_state(video_path=frames_dir)
 
         # Add initial mask at frame 0
-        mask_tensor = self._torch.from_numpy(
+        mask_tensor = torch.from_numpy(
             initial_mask.astype(np.float32) / 255.0
         ).to(self.device)
 
@@ -337,7 +171,7 @@ class SAM2Segmentor:
                             re_mask = self.segment_frame(
                                 frame, click_points,
                             )
-                            re_mask_tensor = self._torch.from_numpy(
+                            re_mask_tensor = torch.from_numpy(
                                 re_mask.astype(np.float32) / 255.0
                             ).to(self.device)
                             self._video_predictor.add_new_mask(
