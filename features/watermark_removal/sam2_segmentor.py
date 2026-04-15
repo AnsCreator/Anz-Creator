@@ -1,17 +1,33 @@
 """
 SAM2 Segmentor — Manual mode for pixel-perfect watermark segmentation.
 User clicks on watermark → SAM2 segments + propagates across frames.
+Includes auto-install fallback.
 """
 
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from typing import Callable, Optional
 
 import cv2
 import numpy as np
 
 from utils.logger import log
+
+
+def _pip_install_sam2() -> bool:
+    """Auto-install SAM2 package."""
+    try:
+        cmd = [sys.executable, "-m", "pip", "install", "-q",
+               "git+https://github.com/facebookresearch/segment-anything-2.git"]
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        subprocess.check_call(cmd, creationflags=creationflags)
+        return True
+    except Exception as e:
+        log.error("SAM2 auto-install failed: %s", e)
+        return False
 
 
 class SAM2Segmentor:
@@ -31,39 +47,47 @@ class SAM2Segmentor:
     def _load_model(self):
         if self._predictor is not None:
             return
+        
+        # Try import, auto-install if missing
         try:
-            import torch  # noqa: F401 — required by sam2
+            import torch  # noqa: F401
+            from sam2.build_sam import build_sam2
+            from sam2.sam2_image_predictor import SAM2ImagePredictor
+            from sam2.sam2_video_predictor import SAM2VideoPredictor
+        except ImportError:
+            log.warning("SAM2 not installed — attempting auto-install…")
+            if not _pip_install_sam2():
+                raise RuntimeError(
+                    "SAM2 is not installed and auto-install failed.\n"
+                    "Please install manually:\n"
+                    "  pip install git+https://github.com/facebookresearch/segment-anything-2.git"
+                )
+            # Retry import after install
+            import torch  # noqa: F401
             from sam2.build_sam import build_sam2
             from sam2.sam2_image_predictor import SAM2ImagePredictor
             from sam2.sam2_video_predictor import SAM2VideoPredictor
 
-            log.info(
-                "Loading SAM2 from %s on %s",
-                self.model_path, self.device,
-            )
-            # Use appropriate config based on model variant
-            model_cfg = "sam2_hiera_b+.yaml"  # default for base+
-            if "tiny" in self.model_path:
-                model_cfg = "sam2_hiera_t.yaml"
-            elif "small" in self.model_path:
-                model_cfg = "sam2_hiera_s.yaml"
-            elif "large" in self.model_path:
-                model_cfg = "sam2_hiera_l.yaml"
+        log.info("Loading SAM2 from %s on %s", self.model_path, self.device)
+        
+        # Use appropriate config based on model variant
+        model_cfg = "sam2_hiera_b+.yaml"  # default for base+
+        if "tiny" in self.model_path:
+            model_cfg = "sam2_hiera_t.yaml"
+        elif "small" in self.model_path:
+            model_cfg = "sam2_hiera_s.yaml"
+        elif "large" in self.model_path:
+            model_cfg = "sam2_hiera_l.yaml"
 
+        try:
             sam2_model = build_sam2(
                 model_cfg, self.model_path, device=self.device,
             )
             self._predictor = SAM2ImagePredictor(sam2_model)
             self._video_predictor = SAM2VideoPredictor(sam2_model)
             log.info("SAM2 loaded successfully.")
-        except ImportError:
-            raise RuntimeError(
-                "SAM2 is not installed. Please install it from:\n"
-                "  pip install git+https://github.com/"
-                "facebookresearch/segment-anything-2.git"
-            )
         except Exception as exc:
-            log.error("Failed to load SAM2: %s", exc)
+            log.error("Failed to load SAM2 model: %s", exc)
             raise
 
     # ── Segment first frame from click points ────────────
