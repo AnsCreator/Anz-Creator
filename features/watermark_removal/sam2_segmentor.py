@@ -156,6 +156,9 @@ class SAM2Segmentor:
         from sam2.sam2_image_predictor import SAM2ImagePredictor
         from sam2.sam2_video_predictor import SAM2VideoPredictor
 
+        # Store torch for later use
+        self._torch = torch
+
         # Use appropriate config based on model variant
         model_cfg = "sam2_hiera_b+.yaml"  # default for base+
         if "tiny" in self.model_path:
@@ -244,7 +247,6 @@ class SAM2Segmentor:
         Returns masks_dir.
         """
         self._load_model()
-        import torch
 
         os.makedirs(masks_dir, exist_ok=True)
 
@@ -266,7 +268,7 @@ class SAM2Segmentor:
         state = self._video_predictor.init_state(video_path=frames_dir)
 
         # Add initial mask at frame 0
-        mask_tensor = torch.from_numpy(
+        mask_tensor = self._torch.from_numpy(
             initial_mask.astype(np.float32) / 255.0
         ).to(self.device)
 
@@ -290,7 +292,7 @@ class SAM2Segmentor:
                             re_mask = self.segment_frame(
                                 frame, click_points,
                             )
-                            re_mask_tensor = torch.from_numpy(
+                            re_mask_tensor = self._torch.from_numpy(
                                 re_mask.astype(np.float32) / 255.0
                             ).to(self.device)
                             self._video_predictor.add_new_mask(
