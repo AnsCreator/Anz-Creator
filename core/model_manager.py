@@ -22,37 +22,33 @@ _APPDATA = os.environ.get("APPDATA", os.path.expanduser("~"))
 MODELS_ROOT = os.path.join(_APPDATA, "Anz-Creator", "models")
 
 
-def _pip_install(package: str, quiet: bool = True) -> bool:
-    """Install a pip package programmatically."""
-    try:
-        cmd = [sys.executable, "-m", "pip", "install"]
-        if quiet:
-            cmd.append("-q")
-        cmd.append(package)
-
-        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-        subprocess.check_call(cmd, creationflags=creationflags)
-        return True
-    except Exception as e:
-        log.error("Failed to install %s: %s", package, e)
-        return False
-
-
 def _ensure_sam2_installed() -> bool:
     """Auto-install SAM2 if not present."""
     try:
         import sam2  # noqa: F401
         return True
     except ImportError:
-        log.info("SAM2 not found — installing automatically…")
-        success = _pip_install(
-            "git+https://github.com/facebookresearch/segment-anything-2.git"
-        )
-        if success:
-            log.info("SAM2 installed successfully.")
-        else:
-            log.error("SAM2 auto-install failed.")
-        return success
+        log.info("SAM2 not found — attempting auto-install…")
+        
+        # Try multiple install methods
+        methods = [
+            ["git+https://github.com/facebookresearch/segment-anything-2.git"],
+            ["--no-cache-dir", "git+https://github.com/facebookresearch/segment-anything-2.git"],
+        ]
+        
+        for method in methods:
+            try:
+                cmd = [sys.executable, "-m", "pip", "install", "-q"] + method
+                creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+                subprocess.check_call(cmd, creationflags=creationflags)
+                log.info("SAM2 installed successfully.")
+                return True
+            except Exception as e:
+                log.warning(f"Install method failed: {e}")
+                continue
+        
+        log.error("All SAM2 auto-install methods failed.")
+        return False
 
 
 class ModelManager:
@@ -139,9 +135,10 @@ class ModelManager:
                 progress_callback(0, "Checking SAM2 installation…")
             if not _ensure_sam2_installed():
                 raise RuntimeError(
-                    "Failed to install SAM2 automatically.\n"
+                    "Failed to install SAM2 automatically.\n\n"
                     "Please install manually:\n"
-                    "  pip install git+https://github.com/facebookresearch/segment-anything-2.git"
+                    "1. Install Git from https://git-scm.com/\n"
+                    "2. Run: pip install git+https://github.com/facebookresearch/segment-anything-2.git"
                 )
 
         dest = self.model_path(family, variant)
@@ -156,7 +153,7 @@ class ModelManager:
             raise ValueError(f"No download URL for {family}/{variant}")
 
         with self._download_lock:
-            # Re-check after acquiring lock (another thread may have downloaded it)
+            # Re-check after acquiring lock
             if self.is_downloaded(family, variant):
                 log.info("Model already cached (after lock): %s", dest)
                 if progress_callback:
@@ -195,7 +192,6 @@ class ModelManager:
                                 f"{downloaded // 1048576}/{total // 1048576} MB",
                             )
 
-                # Verify download isn't empty/corrupt
                 if os.path.getsize(tmp) == 0:
                     os.remove(tmp)
                     raise RuntimeError(f"Downloaded file is empty: {variant}")
