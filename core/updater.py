@@ -1,5 +1,16 @@
 """
 Auto-Updater — check GitHub releases and download updates.
+
+Update flow for PyInstaller onefile builds:
+1. App downloads update.zip to %APPDATA%/Anz-Creator/updates/
+2. App creates update.bat with its own PID embedded
+3. App launches update.bat (detached) and calls sys.exit()
+4. Batch script:
+   a. Waits for the app process to fully terminate (by PID)
+   b. Cleans up leftover _MEI temp folders from PyInstaller
+   c. Extracts update.zip over the app directory
+   d. Restarts the new exe
+   e. Deletes itself
 """
 
 from __future__ import annotations
@@ -44,7 +55,6 @@ def _parse_version(tag: str) -> tuple[int, ...]:
             parts.append(int(p))
         except ValueError:
             parts.append(0)
-    # Pad to 4 parts
     while len(parts) < 4:
         parts.append(0)
     return tuple(parts[:4])
@@ -72,7 +82,6 @@ def check_for_update() -> Optional[dict]:
         if not latest_tag:
             return None
 
-        # Compare versions
         current_v = _parse_version(current)
         latest_v = _parse_version(latest_tag)
 
@@ -155,7 +164,6 @@ def download_update(
                         f"{total // 1048576} MB",
                     )
 
-        # Move complete download to final path
         if os.path.exists(dest):
             os.remove(dest)
         os.rename(tmp, dest)
@@ -178,33 +186,35 @@ def download_update(
 
 def _escape_batch_path(path: str) -> str:
     """Escape a path for safe use in a Windows batch script."""
-    # Replace characters that could be interpreted by cmd.exe
-    # The safest approach is to quote the path
     return path.replace("^", "^^").replace("&", "^&").replace("|", "^|")
 
 
 def apply_update(zip_path: str) -> str:
     """
-    Create a batch script that will:
-    1. Wait for the app to close
-    2. Extract update over current installation
-    3. Restart the app
+    Create a batch script that properly handles the update process:
+
+    1. Force-kills the app by PID (not just asking it to quit)
+    2. Polls until the process is actually dead (up to 30 seconds)
+    3. Cleans up PyInstaller _MEI temp folders that lock DLLs
+    4. Extracts update zip over the app directory
+    5. Restarts the new exe
+    6. Deletes itself
+
     Returns path to the batch script.
     """
     if not os.path.isfile(zip_path):
         raise FileNotFoundError(f"Update zip not found: {zip_path}")
 
-    # Determine app directory
+    # Determine app directory and executable
     if getattr(sys, "frozen", False):
-        # PyInstaller bundle
         app_dir = os.path.dirname(sys.executable)
         app_exe = sys.executable
+        app_pid = os.getpid()
     else:
-        # Running from source
         app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         app_exe = sys.executable
+        app_pid = os.getpid()
 
-    # Create updater batch script
     update_dir = os.path.dirname(zip_path)
     batch_path = os.path.join(update_dir, "update.bat")
 
@@ -212,19 +222,68 @@ def apply_update(zip_path: str) -> str:
     ps_zip = zip_path.replace("'", "''")
     ps_app = app_dir.replace("'", "''")
 
+    # Build batch script
     lines = [
         '@echo off',
-        'echo Anz-Creator Updater',
-        'echo Waiting for application to close...',
-        'timeout /t 5 /nobreak > nul',
+        'chcp 65001 >nul 2>&1',
+        'title Anz-Creator Updater',
+        'echo ========================================',
+        'echo   Anz-Creator Auto-Updater',
+        'echo ========================================',
         'echo.',
+        '',
+        'REM ── Step 1: Kill the app process by PID ──',
+        f'echo Stopping Anz-Creator (PID {app_pid})...',
+        f'taskkill /F /PID {app_pid} >nul 2>&1',
+        '',
+        'REM ── Step 2: Wait until process is fully dead ──',
+        'echo Waiting for process to exit...',
+        'set /a TRIES=0',
+        ':WAIT_LOOP',
+        f'tasklist /FI "PID eq {app_pid}" 2>nul | find "{app_pid}" >nul 2>&1',
+        'if errorlevel 1 goto PROCESS_DEAD',
+        'set /a TRIES+=1',
+        'if %TRIES% GEQ 30 (',
+        '    echo ERROR: Process did not exit after 30 seconds.',
+        '    echo Please close Anz-Creator manually and run this script again.',
+        '    pause',
+        '    exit /b 1',
+        ')',
+        'timeout /t 1 /nobreak >nul',
+        'goto WAIT_LOOP',
+        ':PROCESS_DEAD',
+        'echo Process terminated.',
+        '',
+        'REM ── Step 3: Extra wait for file handles to release ──',
+        'timeout /t 3 /nobreak >nul',
+        '',
+        'REM ── Step 4: Clean up PyInstaller _MEI temp folders ──',
+        'echo Cleaning up temp files...',
+        'for /d %%D in ("%LOCALAPPDATA%\\Temp\\_MEI*") do (',
+        '    rd /s /q "%%D" >nul 2>&1',
+        ')',
+        '',
+        'REM ── Step 5: Extract update ──',
         'echo Extracting update...',
-        f"powershell -Command \"Expand-Archive -Path '{ps_zip}'"
-        f" -DestinationPath '{ps_app}' -Force\"",
-        'echo.',
+        "powershell -NoProfile -Command \""
+        f"try {{ Expand-Archive -Path '{ps_zip}'"
+        f" -DestinationPath '{ps_app}' -Force;"
+        " Write-Host 'Extraction successful.' }}"
+        " catch { Write-Host ('Extraction failed: '"
+        " + $_.Exception.Message);"
+        " Read-Host 'Press Enter to exit'; exit 1 }\"",
+        '',
+        'if errorlevel 1 (',
+        '    echo Update extraction failed!',
+        '    pause',
+        '    exit /b 1',
+        ')',
+        '',
+        'REM ── Step 6: Clean up zip ──',
         'echo Cleaning up...',
-        f'del "{_escape_batch_path(zip_path)}" 2>nul',
-        'echo.',
+        f'del "{_escape_batch_path(zip_path)}" >nul 2>&1',
+        '',
+        'REM ── Step 7: Restart app ──',
         'echo Starting Anz-Creator...',
     ]
 
@@ -238,8 +297,15 @@ def apply_update(zip_path: str) -> str:
         )
 
     lines.extend([
-        'echo Update complete!',
-        'del "%~f0" 2>nul',
+        '',
+        'echo.',
+        'echo ========================================',
+        'echo   Update complete!',
+        'echo ========================================',
+        'timeout /t 2 /nobreak >nul',
+        '',
+        'REM ── Step 8: Self-delete ──',
+        'del "%~f0" >nul 2>&1',
         'exit',
     ])
 
@@ -248,5 +314,5 @@ def apply_update(zip_path: str) -> str:
     with open(batch_path, "w", encoding="utf-8") as f:
         f.write(batch_content)
 
-    log.info("Update script created: %s", batch_path)
+    log.info("Update script created: %s (target PID: %d)", batch_path, app_pid)
     return batch_path
