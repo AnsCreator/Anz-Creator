@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -54,12 +55,27 @@ class ProgressPanel(QWidget):
 
 # ── Video Preview Widget ────────────────────────────────
 class VideoPreview(QLabel):
-    """Display a video thumbnail with aspect ratio preservation."""
+    """Display a video thumbnail with aspect ratio preservation.
+
+    The infinite-zoom bug occurs when setPixmap() changes QLabel's
+    sizeHint, which triggers a layout recalculation, which triggers
+    resizeEvent, which calls _fit() again - infinite loop.
+
+    Fix: use Expanding size policy so QLabel never requests a resize
+    based on pixmap content, and track the last fitted size to skip
+    redundant refits.
+    """
 
     def __init__(self, parent=None, min_h: int = 240):
         super().__init__(parent)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumHeight(min_h)
+        # CRITICAL: Expanding policy prevents QLabel from requesting
+        # layout changes when pixmap is set, breaking the resize loop.
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
         self.setStyleSheet(
             "background: #1a1a2e; border: 2px dashed #444; "
             "border-radius: 8px;"
@@ -67,6 +83,7 @@ class VideoPreview(QLabel):
         self.setText("No video loaded")
         self._pixmap: Optional[QPixmap] = None
         self._fitting = False
+        self._last_fit_size: tuple[int, int] = (0, 0)
         self._resize_timer: Optional[QTimer] = None
 
     def set_pixmap_direct(self, pixmap: QPixmap):
@@ -74,8 +91,9 @@ class VideoPreview(QLabel):
         try:
             if pixmap is not None and not pixmap.isNull():
                 self._pixmap = QPixmap(pixmap)
+                self._last_fit_size = (0, 0)  # Force refit
                 self.setText("")
-                self._schedule_fit()
+                self._do_fit()  # Fit immediately, no timer
         except Exception:
             pass
 
@@ -83,23 +101,21 @@ class VideoPreview(QLabel):
         try:
             pm = QPixmap(path)
             if not pm.isNull():
-                self._pixmap = QPixmap(pm)
-                self.setText("")
-                self._schedule_fit()
+                self.set_pixmap_direct(pm)
         except Exception:
             pass
 
     def _schedule_fit(self):
-        """Debounce fit calls to prevent recursion."""
+        """Debounce resize-triggered fits."""
         if self._fitting:
             return
         if self._resize_timer is None:
             self._resize_timer = QTimer(self)
             self._resize_timer.setSingleShot(True)
-            self._resize_timer.timeout.connect(self._fit)
-        self._resize_timer.start(10)
+            self._resize_timer.timeout.connect(self._do_fit)
+        self._resize_timer.start(50)  # 50ms debounce
 
-    def _fit(self):
+    def _do_fit(self):
         """Scale pixmap to fit widget while preserving aspect ratio."""
         if self._fitting:
             return
@@ -112,6 +128,11 @@ class VideoPreview(QLabel):
             h = self.height()
             if w <= 0 or h <= 0:
                 return
+
+            # Skip if size hasn't actually changed
+            if (w, h) == self._last_fit_size:
+                return
+            self._last_fit_size = (w, h)
 
             scaled = self._pixmap.scaled(
                 QSize(w, h),
@@ -126,14 +147,16 @@ class VideoPreview(QLabel):
             self._fitting = False
 
     def resizeEvent(self, event):
-        """Override resize to debounce fit calls."""
-        self._schedule_fit()
+        """Rescale pixmap on resize, but only if not already fitting."""
         super().resizeEvent(event)
+        if not self._fitting:
+            self._schedule_fit()
 
     def setPixmap(self, pixmap):
-        """Override to prevent external setPixmap from causing issues."""
+        """Block external setPixmap to prevent bypassing our scaling."""
         if self._fitting:
             super().setPixmap(pixmap)
+        # else: ignored — use set_pixmap_direct() instead
 
 
 # ── Clickable Frame for SAM2 manual mode ─────────────────
@@ -246,8 +269,9 @@ class ClickableFrame(VideoPreview):
 
             painter.end()
 
+            # Set directly via QLabel.setPixmap, bypassing our override
             self._fitting = True
-            super().setPixmap(scaled_pm)
+            super(VideoPreview, self).setPixmap(scaled_pm)
             self._fitting = False
 
         except Exception:
@@ -257,7 +281,8 @@ class ClickableFrame(VideoPreview):
 
     def clear_points(self):
         self._points.clear()
-        self._schedule_fit()
+        self._last_fit_size = (0, 0)  # Force refit to clear dots
+        self._do_fit()
 
     @property
     def points(self) -> list[tuple[int, int]]:
