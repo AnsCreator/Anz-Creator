@@ -1,35 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-import os
 import sys
-
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
-
-block_cipher = None
-
-# Collect qt-material themes
-material_datas = collect_data_files('qt_material')
-ultralytics_datas = collect_data_files('ultralytics')
-
-# Hidden imports for AI libraries
-hiddenimports = [
-    'torch',
-    'torchvision',
-    'numpy',
-    'cv2',
-    'ultralytics',
-    'ultralytics.nn',
-    'ultralytics.utils',
-    'scenedetect',
-    'scenedetect.detectors',
-    'yaml',
-    'requests',
-    'PIL',
-    'sam2',
-    'sam2.build_sam',
-    'sam2.sam2_image_predictor',
-    'sam2.sam2_video_predictor',
-]
 
 a = Analysis(
     ['main.py'],
@@ -38,29 +10,74 @@ a = Analysis(
     datas=[
         ('config.yaml', '.'),
         ('version.txt', '.'),
-        ('ui/*.py', 'ui'),
-        ('core/*.py', 'core'),
-        ('features/**/*.py', 'features'),
-        ('utils/*.py', 'utils'),
-    ] + material_datas + ultralytics_datas,
-    hiddenimports=hiddenimports,
+    ] + collect_data_files('sam2') + collect_data_files('ultralytics'),
+    hiddenimports=[
+        'sam2',
+        'sam2.build_sam',
+        'sam2.sam2_image_predictor',
+        'sam2.sam2_video_predictor',
+        'sam2.modeling',
+        'sam2.modeling.sam2_base',
+        'sam2.modeling.transformer',
+        'sam2.modeling.backbones',
+        'sam2.modeling.backbones.hieradet',
+        'sam2.modeling.backbones.image_encoder',
+        'sam2.modeling.memory_attention',
+        'sam2.modeling.memory_encoder',
+        'sam2.utils',
+        'sam2.utils.amg',
+        'sam2.utils.misc',
+        'sam2.utils.transforms',
+        'ultralytics',
+        'ultralytics.nn.modules',
+        'ultralytics.data',
+        'torch',
+        'torchvision',
+        'torchvision.ops',
+        'torchvision.transforms',
+        'cv2',
+        'numpy',
+        'numpy.core',
+        'numpy.lib',
+        'numpy.random',
+        'PIL',
+        'PIL.Image',
+        'PIL.ImageDraw',
+        'PIL.ImageFont',
+        'yaml',
+        'requests',
+        'scenedetect',
+        'scenedetect.detectors',
+        'scenedetect.scene_manager',
+        'hydra',
+        'hydra._internal',
+        'omegaconf',
+        'iopath',
+        'fvcore',
+        'yacs',
+        'tqdm',
+    ] + collect_submodules('sam2') + collect_submodules('ultralytics'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tkinter', 'matplotlib', 'jupyter', 'IPython', 'pytest'],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
+    excludes=[
+        'tkinter',
+        'matplotlib',
+        'jupyter',
+        'notebook',
+        'IPython',
+        'tensorboard',
+        'torch.utils.tensorboard',
+    ],
     noarchive=False,
 )
 
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure)
 
 exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
-    a.zipfiles,
     a.datas,
     [],
     name='Anz-Creator',
