@@ -46,10 +46,14 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0
+
+      - name: Install Python dependencies
         run: |
           pip install --upgrade pip
           pip install PyQt6 qt-material PyYAML opencv-python-headless numpy Pillow requests
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Validate Python syntax (all files)
         run: |
@@ -77,12 +81,14 @@ jobs:
           python-version: "3.11"
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0t64
+        run: sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: |
           pip install --upgrade pip
           pip install PyQt6 qt-material PyYAML opencv-python-headless numpy Pillow requests pytest
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install ultralytics
 
       - name: Run tests
         run: |
