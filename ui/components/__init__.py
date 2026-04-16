@@ -1,3 +1,7 @@
+"""
+Reusable UI components for Anz-Creator.
+"""
+
 from __future__ import annotations
 
 import os
@@ -48,93 +52,16 @@ class ProgressPanel(QWidget):
         self.bar.setValue(0)
         self.label.setText("Ready")
 
-# ── Model download dialog ───────────────────────────────
-class ModelDownloadDialog(QDialog):
-    """Dialog showing model download progress."""
-
-    def __init__(self, parent=None, title="Downloading Models"):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setMinimumWidth(450)
-        self.setModal(True)
-
-        layout = QVBoxLayout(self)
-        self.info_label = QLabel("Preparing…")
-        self.info_label.setWordWrap(True)
-        layout.addWidget(self.info_label)
-
-        self.progress = ProgressPanel()
-        layout.addWidget(self.progress)
-
-        self.cancel_btn = QPushButton("Cancel")
-        layout.addWidget(
-            self.cancel_btn, alignment=Qt.AlignmentFlag.AlignRight,
-        )
-
-    def update(self, percent: int, message: str):
-        self.progress.update_progress(percent, message)
-        self.info_label.setText(message)
-
-
-# ── Section header ───────────────────────────────────────
-class SectionHeader(QLabel):
-    def __init__(self, text: str, parent=None):
-        super().__init__(text, parent)
-        self.setStyleSheet(
-            "font-size: 15px; font-weight: bold; color: #e0e0e0; "
-            "padding: 8px 0 4px 0; border: none;"
-        )
-
-# ── Styled Progress Bar ─────────────────────────────────
-class ProgressPanel(QWidget):
-    """Animated progress bar with status label."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 4, 0, 4)
-
-        self.label = QLabel("Ready")
-        self.label.setStyleSheet("font-size: 12px;")
-        layout.addWidget(self.label)
-
-        self.bar = QProgressBar()
-        self.bar.setRange(0, 100)
-        self.bar.setValue(0)
-        self.bar.setTextVisible(True)
-        self.bar.setFixedHeight(22)
-        layout.addWidget(self.bar)
-
-    def update_progress(self, percent: int, message: str = ""):
-        self.bar.setValue(max(0, min(100, percent)))
-        if message:
-            self.label.setText(message)
-
-    def reset(self):
-        self.bar.setValue(0)
-        self.label.setText("Ready")
-
 
 # ── Video Preview Widget ────────────────────────────────
 class VideoPreview(QLabel):
-    """Display a video thumbnail with aspect ratio preservation.
-
-    The infinite-zoom bug occurs when setPixmap() changes QLabel's
-    sizeHint, which triggers a layout recalculation, which triggers
-    resizeEvent, which calls _fit() again - infinite loop.
-
-    Fix: use Expanding size policy so QLabel never requests a resize
-    based on pixmap content, and track the last fitted size to skip
-    redundant refits.
-    """
+    """Display a video thumbnail with aspect ratio preservation."""
 
     def __init__(self, parent=None, min_h: int = 240, max_h: int = 400):
         super().__init__(parent)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumHeight(min_h)
         self.setMaximumHeight(max_h)
-        # Expanding horizontally, Fixed vertically — prevents the widget
-        # from growing unbounded inside a QScrollArea.
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
@@ -219,7 +146,6 @@ class VideoPreview(QLabel):
         """Block external setPixmap to prevent bypassing our scaling."""
         if self._fitting:
             super().setPixmap(pixmap)
-        # else: ignored — use set_pixmap_direct() instead
 
 
 # ── Clickable Frame for SAM2 manual mode ─────────────────
