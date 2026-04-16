@@ -6,6 +6,7 @@ Pre-bundled models take priority.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 import threading
@@ -26,6 +27,28 @@ def _get_bundled_models_path() -> str:
     if getattr(sys, 'frozen', False):
         return os.path.join(sys._MEIPASS, "models")
     return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")
+
+
+def _compute_sha256(filepath: str) -> str:
+    """Compute SHA-256 hash of a file."""
+    sha256 = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            sha256.update(chunk)
+    return sha256.hexdigest()
+
+
+def _verify_checksum(filepath: str, expected_sha256: str) -> bool:
+    """Verify that file matches expected SHA-256."""
+    if not expected_sha256:
+        return True  # No checksum provided, skip verification
+    actual = _compute_sha256(filepath)
+    if actual != expected_sha256:
+        log.error("Checksum mismatch for %s", filepath)
+        log.error("Expected: %s", expected_sha256)
+        log.error("Got:      %s", actual)
+        return False
+    return True
 
 
 class ModelManager:
@@ -69,6 +92,13 @@ class ModelManager:
         except (KeyError, TypeError):
             return None
 
+    def get_checksum(self, family: str, variant: str) -> Optional[str]:
+        """Get expected SHA-256 checksum from config."""
+        try:
+            return self._cfg["models"][family]["options"][variant].get("sha256")
+        except (KeyError, TypeError):
+            return None
+
     def get_size_mb(self, family: str, variant: str) -> int:
         try:
             return self._cfg["models"][family]["options"][variant].get("size_mb", 0)
@@ -107,26 +137,35 @@ class ModelManager:
         progress_callback: Optional[Callable[[int, str], None]] = None,
         cancel_flag: Optional[Callable[[], bool]] = None,
     ) -> str:
-        """Download a model if not present. Returns local path."""
+        """Download a model if not present. Verifies checksum. Returns local path."""
         dest = self.model_path(family, variant)
+        expected_checksum = self.get_checksum(family, variant)
 
-        # Already have it (bundled or downloaded)
+        # Already have it (bundled or downloaded) – verify checksum if present
         if self.is_downloaded(family, variant):
-            log.info("Model already available: %s", dest)
-            if progress_callback:
-                progress_callback(100, f"{variant} ready.")
-            return dest
+            if expected_checksum and not _verify_checksum(dest, expected_checksum):
+                log.warning("Cached model %s has invalid checksum, redownloading...", dest)
+                os.remove(dest)
+            else:
+                log.info("Model already available: %s", dest)
+                if progress_callback:
+                    progress_callback(100, f"{variant} ready.")
+                return dest
 
         url = self.get_url(family, variant)
         if not url:
             raise ValueError(f"No download URL for {family}/{variant}")
 
         with self._download_lock:
+            # Re-check after acquiring lock
             if self.is_downloaded(family, variant):
-                log.info("Model already cached (after lock): %s", dest)
-                if progress_callback:
-                    progress_callback(100, f"{variant} ready.")
-                return dest
+                if expected_checksum and not _verify_checksum(dest, expected_checksum):
+                    os.remove(dest)
+                else:
+                    log.info("Model already cached (after lock): %s", dest)
+                    if progress_callback:
+                        progress_callback(100, f"{variant} ready.")
+                    return dest
 
             Path(os.path.dirname(dest)).mkdir(parents=True, exist_ok=True)
             tmp = dest + ".part"
@@ -136,13 +175,30 @@ class ModelManager:
             if progress_callback:
                 progress_callback(0, f"Downloading {variant}…")
 
-            try:
-                resp = requests.get(url, stream=True, timeout=(15, 30))
-                resp.raise_for_status()
-                total = int(resp.headers.get("content-length", 0))
-                downloaded = 0
+            # --- Download with resume support ---
+            headers = {}
+            existing_size = 0
+            if os.path.exists(tmp):
+                existing_size = os.path.getsize(tmp)
+                if existing_size > 0:
+                    headers["Range"] = f"bytes={existing_size}-"
+                    log.info("Resuming download from byte %d", existing_size)
 
-                with open(tmp, "wb") as f:
+            try:
+                resp = requests.get(url, stream=True, timeout=(15, 30), headers=headers)
+                if resp.status_code == 416:
+                    # Range not satisfiable, start over
+                    log.warning("Resume failed, starting fresh")
+                    os.remove(tmp)
+                    existing_size = 0
+                    resp = requests.get(url, stream=True, timeout=(15, 30))
+                resp.raise_for_status()
+
+                total = int(resp.headers.get("content-length", 0)) + existing_size
+                downloaded = existing_size
+
+                mode = "ab" if existing_size > 0 else "wb"
+                with open(tmp, mode) as f:
                     for chunk in resp.iter_content(chunk_size=1024 * 256):
                         if cancel_flag and cancel_flag():
                             log.info("Download cancelled: %s", variant)
@@ -164,8 +220,13 @@ class ModelManager:
                     os.remove(tmp)
                     raise RuntimeError(f"Downloaded file is empty: {variant}")
 
+                # Verify checksum before renaming
+                if expected_checksum and not _verify_checksum(tmp, expected_checksum):
+                    os.remove(tmp)
+                    raise RuntimeError(f"Checksum verification failed for {variant}")
+
                 os.rename(tmp, dest)
-                log.info("Model saved: %s", dest)
+                log.info("Model saved and verified: %s", dest)
                 if progress_callback:
                     progress_callback(100, f"{variant} ready.")
                 return dest
