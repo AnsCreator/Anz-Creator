@@ -50,32 +50,38 @@ class Settings:
                     inst = super().__new__(cls)
                     inst._data = {}
                     inst._save_lock = threading.Lock()
+                    inst._data_lock = threading.RLock()  # Reentrant lock for data access
                     inst._load()
                     cls._instance = inst
         return cls._instance
 
     def _load(self):
-        Path(_SETTINGS_DIR).mkdir(parents=True, exist_ok=True)
-        if os.path.isfile(_SETTINGS_FILE):
-            try:
-                with open(_SETTINGS_FILE, "r", encoding="utf-8") as f:
-                    loaded = yaml.safe_load(f)
-                    self._data = loaded if isinstance(loaded, dict) else {}
-                log.info("Settings loaded from %s", _SETTINGS_FILE)
-            except Exception as exc:
-                log.warning("Failed to read settings, using defaults: %s", exc)
-                self._data = {}
-        self._data = _deep_merge(_DEFAULT, self._data)
+        """Load settings from disk. Must hold _data_lock."""
+        with self._data_lock:
+            Path(_SETTINGS_DIR).mkdir(parents=True, exist_ok=True)
+            if os.path.isfile(_SETTINGS_FILE):
+                try:
+                    with open(_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                        loaded = yaml.safe_load(f)
+                        self._data = loaded if isinstance(loaded, dict) else {}
+                    log.info("Settings loaded from %s", _SETTINGS_FILE)
+                except Exception as exc:
+                    log.warning("Failed to read settings, using defaults: %s", exc)
+                    self._data = {}
+            # Deep merge with defaults (protect with lock)
+            self._data = _deep_merge(_DEFAULT, self._data)
 
     def save(self):
+        """Save settings to disk atomically."""
         with self._save_lock:
+            with self._data_lock:
+                data_copy = self._data.copy()  # Avoid mutation during save
             try:
                 Path(_SETTINGS_DIR).mkdir(parents=True, exist_ok=True)
-                # Write to temp file first, then rename for atomicity
                 tmp_file = _SETTINGS_FILE + ".tmp"
                 with open(tmp_file, "w", encoding="utf-8") as f:
-                    yaml.dump(self._data, f, default_flow_style=False)
-                # Atomic rename (on Windows, need to remove target first)
+                    yaml.dump(data_copy, f, default_flow_style=False)
+                # Atomic rename
                 if os.path.exists(_SETTINGS_FILE):
                     os.replace(tmp_file, _SETTINGS_FILE)
                 else:
@@ -83,7 +89,6 @@ class Settings:
                 log.debug("Settings saved.")
             except Exception as exc:
                 log.error("Failed to save settings: %s", exc)
-                # Clean up temp file
                 tmp_file = _SETTINGS_FILE + ".tmp"
                 if os.path.exists(tmp_file):
                     try:
@@ -92,14 +97,15 @@ class Settings:
                         pass
 
     def get(self, dotpath: str, default: Any = None) -> Any:
-        keys = dotpath.split(".")
-        node = self._data
-        for k in keys:
-            if isinstance(node, dict) and k in node:
-                node = node[k]
-            else:
-                return default
-        return node
+        with self._data_lock:
+            keys = dotpath.split(".")
+            node = self._data
+            for k in keys:
+                if isinstance(node, dict) and k in node:
+                    node = node[k]
+                else:
+                    return default
+            return node
 
     def get_path(self, dotpath: str, default: Any = None) -> Any:
         """Return config value with env vars expanded (e.g. %APPDATA%)."""
@@ -109,16 +115,18 @@ class Settings:
         return val
 
     def set(self, dotpath: str, value: Any):
-        keys = dotpath.split(".")
-        node = self._data
-        for k in keys[:-1]:
-            node = node.setdefault(k, {})
-        node[keys[-1]] = value
+        with self._data_lock:
+            keys = dotpath.split(".")
+            node = self._data
+            for k in keys[:-1]:
+                node = node.setdefault(k, {})
+            node[keys[-1]] = value
         self.save()
 
     @property
     def data(self) -> dict:
-        return self._data
+        with self._data_lock:
+            return self._data.copy()
 
     @classmethod
     def reset_instance(cls):
@@ -127,6 +135,7 @@ class Settings:
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
+    """Merge two dictionaries recursively. Does not modify inputs."""
     merged = base.copy()
     for k, v in override.items():
         if k in merged and isinstance(merged[k], dict) and isinstance(v, dict):
