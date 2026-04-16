@@ -12,8 +12,6 @@ from typing import Callable, Optional
 import cv2
 import numpy as np
 import torch
-from hydra.utils import instantiate
-from omegaconf import OmegaConf
 
 from utils.logger import log
 
@@ -29,91 +27,77 @@ class SAM2Segmentor:
         self._predictor = None
         self._video_predictor = None
 
-    def _build_sam2_manual(self, ckpt_path: str):
+    def _find_sam2_config(self) -> str:
         """
-        Manually build SAM2 model from checkpoint using OmegaConf + instantiate.
-        This is the only reliable method inside PyInstaller-frozen apps.
+        Locate the correct SAM2 YAML config file for the current checkpoint.
+        Searches the SAM2 package directory for a file containing '_target_'
+        that matches the expected model size.
         """
-        # Determine the root directory of the SAM2 package
-        if getattr(sys, "frozen", False):
+        if getattr(sys, 'frozen', False):
             base_dir = sys._MEIPASS
         else:
             import sam2
             base_dir = os.path.dirname(sam2.__file__)
 
-        # Guess the model size from the checkpoint filename
-        ckpt_name = os.path.basename(ckpt_path).lower()
-        if "tiny" in ckpt_name:
-            target_yaml = "sam2_hiera_t.yaml"
-        elif "small" in ckpt_name:
-            target_yaml = "sam2_hiera_s.yaml"
-        elif "large" in ckpt_name:
-            target_yaml = "sam2_hiera_l.yaml"
+        model_name = os.path.basename(self.model_path).lower()
+        if "tiny" in model_name:
+            target_patterns = ["sam2_hiera_t.yaml", "sam2_hiera_tiny.yaml"]
+        elif "small" in model_name:
+            target_patterns = ["sam2_hiera_s.yaml", "sam2_hiera_small.yaml"]
+        elif "large" in model_name:
+            target_patterns = ["sam2_hiera_l.yaml", "sam2_hiera_large.yaml"]
         else:
-            target_yaml = "sam2_hiera_b+.yaml"
+            target_patterns = ["sam2_hiera_b+.yaml", "sam2_hiera_base.yaml", "sam2_hiera_b_plus.yaml"]
 
-        # Walk the base directory to find the YAML file that contains '_target_'
-        config_path = None
+        # Walk the base directory for a config file that contains '_target_' (actual model config)
         for root, _, files in os.walk(base_dir):
             for file in files:
-                if file == target_yaml:
-                    candidate = os.path.join(root, file)
+                if any(file.endswith(pat) for pat in target_patterns):
+                    filepath = os.path.join(root, file)
                     try:
-                        with open(candidate, "r", encoding="utf-8") as f:
+                        with open(filepath, "r", encoding="utf-8") as f:
                             if "_target_" in f.read():
-                                config_path = candidate
-                                break
+                                return filepath
                     except Exception:
                         continue
-            if config_path:
-                break
 
-        if config_path is None:
-            raise FileNotFoundError(
-                f"Could not find a valid SAM2 config file ({target_yaml}) containing '_target_' "
-                f"inside {base_dir}"
-            )
+        # Fallback: any YAML with '_target_' in the sam2 folder
+        for root, _, files in os.walk(base_dir):
+            for file in files:
+                if file.endswith(".yaml"):
+                    filepath = os.path.join(root, file)
+                    try:
+                        with open(filepath, "r", encoding="utf-8") as f:
+                            if "_target_" in f.read():
+                                log.warning("Using fallback config: %s", filepath)
+                                return filepath
+                    except Exception:
+                        continue
 
-        log.info("Loading SAM2 config: %s", config_path)
-        cfg = OmegaConf.load(config_path)
-
-        # The config sometimes nests the model under the 'model' key
-        if "model" in cfg and "_target_" in cfg.model:
-            model_cfg = cfg.model
-        else:
-            model_cfg = cfg
-
-        model = instantiate(model_cfg, _recursive_=True)
-
-        log.info("Loading SAM2 weights from: %s", ckpt_path)
-        state_dict = torch.load(ckpt_path, map_location="cpu")
-        if "model" in state_dict:
-            state_dict = state_dict["model"]
-
-        # Strip 'module.' prefix (from DDP training)
-        new_state_dict = {}
-        for k, v in state_dict.items():
-            if k.startswith("module."):
-                k = k[7:]
-            new_state_dict[k] = v
-
-        model.load_state_dict(new_state_dict, strict=False)
-        model.to(self.device)
-        model.eval()
-        return model
+        raise FileNotFoundError(f"Could not find SAM2 config for {self.model_path} in {base_dir}")
 
     def _load_model(self):
-        """Load SAM2 model and initialize predictors."""
+        """Load SAM2 model using official build_sam2 with explicit config."""
         if self._predictor is not None:
             return
 
         log.info("Loading SAM2 from %s on %s", self.model_path, self.device)
 
         try:
+            from sam2.build_sam import build_sam2
             from sam2.sam2_image_predictor import SAM2ImagePredictor
             from sam2.sam2_video_predictor import SAM2VideoPredictor
 
-            sam2_model = self._build_sam2_manual(self.model_path)
+            # Find the correct config file based on checkpoint name
+            config_file = self._find_sam2_config()
+            log.info("Using SAM2 config: %s", config_file)
+
+            sam2_model = build_sam2(
+                config_file=config_file,
+                ckpt_path=self.model_path,
+                device=self.device,
+                apply_postprocessing=True,
+            )
 
             self._predictor = SAM2ImagePredictor(sam2_model)
             self._video_predictor = SAM2VideoPredictor(sam2_model)
@@ -122,6 +106,8 @@ class SAM2Segmentor:
         except Exception as e:
             log.error("Failed to load SAM2: %s", e)
             raise
+
+    # ... (lanjutan segmentasi frame dan propagasi mask) ...
 
     def segment_frame(
         self,
