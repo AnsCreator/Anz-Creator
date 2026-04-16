@@ -95,6 +95,7 @@ def _auto_download_ffmpeg(app_bin: str, progress_callback=None, cancel_flag=None
     Downloads to disk, extracts ffmpeg.exe + ffprobe.exe to app_bin.
     """
     import zipfile
+
     import requests
 
     SOURCES = [
