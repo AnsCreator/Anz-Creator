@@ -16,7 +16,9 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QTabWidget,
     QVBoxLayout,
@@ -743,29 +745,6 @@ class WatermarkRemovalPanel(QWidget):
 
 
 # ── Settings Panel ───────────────────────────────────────
-from __future__ import annotations
-
-import os
-
-from PyQt6.QtWidgets import (
-    QFrame,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QMessageBox,
-    QProgressBar,
-    QPushButton,
-    QRadioButton,
-    QVBoxLayout,
-    QWidget,
-)
-
-from core.model_manager import ModelManager
-from core.settings import Settings
-from core.task_queue import TaskQueue, Worker
-from ui.components import SectionHeader
-from utils.logger import log
-
 class SettingsPanel(QWidget):
     """Application settings — model selection, manual downloads, paths."""
 
@@ -816,12 +795,12 @@ class SettingsPanel(QWidget):
             row_lay.setSpacing(4)
 
             top_row = QHBoxLayout()
-            
+
             # 1. Radio Button (Nama, Deskripsi, Ukuran MB)
             size_text = f"{v['size_mb']}MB" if v.get("size_mb") else f"{v.get('vram_gb', 0)}GB VRAM"
             radio = QRadioButton(f"{v['name']}  —  {v['description']} ({size_text})")
             radio.setChecked(v['name'] == current)
-            
+
             # Simpan pengaturan jika radio button dipilih
             radio.toggled.connect(
                 lambda checked, f=family, n=v['name']: self.settings.set(f"models.{f}", n) if checked else None
@@ -832,10 +811,10 @@ class SettingsPanel(QWidget):
             # 2. Label Status dan Tombol Unduh Manual
             status_lbl = QLabel("✅ Ready")
             status_lbl.setStyleSheet("color: #66bb6a; font-weight: bold;")
-            
+
             dl_btn = QPushButton("⬇ Download")
             dl_btn.setFixedWidth(100)
-            
+
             pbar = QProgressBar()
             pbar.setRange(0, 100)
             pbar.setFixedHeight(16)
@@ -854,12 +833,12 @@ class SettingsPanel(QWidget):
 
             # 3. Hubungkan tombol download ke fungsi eksekutor
             dl_btn.clicked.connect(
-                lambda checked, f=family, var=v['name'], b=dl_btn, p=pbar, s=status_lbl: 
+                lambda checked, f=family, var=v['name'], b=dl_btn, p=pbar, s=status_lbl:
                 self._start_manual_download(f, var, b, p, s)
             )
 
             lay.addWidget(row_widget)
-            
+
             # Garis pemisah antar varian
             line = QFrame()
             line.setFrameShape(QFrame.Shape.HLine)
