@@ -684,7 +684,6 @@ class WatermarkRemovalPanel(QWidget):
         self.cancel_btn.setEnabled(False)
         self._show_error("Pipeline Error", err)
 
-        # ── Download models ──────────────────────────────────
     def _download_models(self, models: list[tuple[str, str]], on_done=None):
         dlg = ModelDownloadDialog(self, title="Downloading Models")
         dlg.show()
@@ -800,7 +799,7 @@ class SettingsPanel(QWidget):
         for v in variants:
             size = (
                 f"{v['size_mb']}MB"
-                if v["size_mb"] else f"{v['vram_gb']}GB VRAM"
+                if v.get("size_mb") else f"{v['vram_gb']}GB VRAM"
             )
             status = " ✓" if v["downloaded"] else ""
             label = (
