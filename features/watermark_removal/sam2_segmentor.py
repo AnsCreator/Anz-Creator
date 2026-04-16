@@ -6,6 +6,7 @@ User clicks on watermark → SAM2 segments + propagates across frames.
 from __future__ import annotations
 
 import os
+import sys
 from typing import Callable, Optional
 
 import cv2
@@ -26,89 +27,90 @@ class SAM2Segmentor:
         self._predictor = None
         self._video_predictor = None
 
-    def _load_model(self):
-    """Load SAM2 model by auto-discovering the matching config file."""
-    if self._predictor is not None:
-        return
+    def _find_sam2_config(self) -> str:
+        """
+        Locate the correct SAM2 YAML config file for the current checkpoint.
+        Searches the SAM2 package directory for a file containing '_target_'
+        that matches the expected model size (tiny/small/base/large).
+        """
+        # Determine base directory where SAM2 package is installed
+        if getattr(sys, 'frozen', False):
+            base_dir = sys._MEIPASS
+        else:
+            import sam2
+            base_dir = os.path.dirname(sam2.__file__)
 
-    log.info("Loading SAM2 from %s on %s", self.model_path, self.device)
+        # Map checkpoint filename to expected config file patterns
+        model_name = os.path.basename(self.model_path).lower()
+        if "tiny" in model_name:
+            target_patterns = ["sam2_hiera_t.yaml", "sam2_hiera_tiny.yaml"]
+        elif "small" in model_name:
+            target_patterns = ["sam2_hiera_s.yaml", "sam2_hiera_small.yaml"]
+        elif "large" in model_name:
+            target_patterns = ["sam2_hiera_l.yaml", "sam2_hiera_large.yaml"]
+        else:  # base or base+
+            target_patterns = ["sam2_hiera_b+.yaml", "sam2_hiera_base.yaml", "sam2_hiera_b_plus.yaml"]
 
-    try:
-        from sam2.build_sam import build_sam2
-        from sam2.sam2_image_predictor import SAM2ImagePredictor
-        from sam2.sam2_video_predictor import SAM2VideoPredictor
+        # Walk the SAM2 directory to find a config file that contains '_target_' (actual model config)
+        for root, _, files in os.walk(base_dir):
+            for file in files:
+                if any(file.endswith(pat) for pat in target_patterns):
+                    filepath = os.path.join(root, file)
+                    try:
+                        with open(filepath, "r", encoding="utf-8") as f:
+                            if "_target_" in f.read():
+                                return filepath
+                    except Exception:
+                        continue
 
-        # Find the correct config file based on checkpoint name
-        config_file = self._find_sam2_config()
-        log.info("Using SAM2 config: %s", config_file)
+        # Fallback: search any YAML containing '_target_' in the sam2 directory
+        for root, _, files in os.walk(base_dir):
+            for file in files:
+                if file.endswith(".yaml"):
+                    filepath = os.path.join(root, file)
+                    try:
+                        with open(filepath, "r", encoding="utf-8") as f:
+                            if "_target_" in f.read():
+                                log.warning("Using fallback config: %s", filepath)
+                                return filepath
+                    except Exception:
+                        continue
 
-        sam2_model = build_sam2(
-            config_file=config_file,
-            ckpt_path=self.model_path,
-            device=self.device,
-            apply_postprocessing=True,
+        raise FileNotFoundError(
+            f"Could not find SAM2 config file for {self.model_path} in {base_dir}"
         )
 
-        self._predictor = SAM2ImagePredictor(sam2_model)
-        self._video_predictor = SAM2VideoPredictor(sam2_model)
-        log.info("SAM2 predictors ready")
+    def _load_model(self):
+        """Load SAM2 model by auto-discovering the matching config file."""
+        if self._predictor is not None:
+            return
 
-    except Exception as e:
-        log.error("Failed to load SAM2: %s", e)
-        raise
+        log.info("Loading SAM2 from %s on %s", self.model_path, self.device)
 
-def _find_sam2_config(self) -> str:
-    """Find the appropriate SAM2 YAML config file for the current checkpoint."""
-    import sys
-    import os
+        try:
+            from sam2.build_sam import build_sam2
+            from sam2.sam2_image_predictor import SAM2ImagePredictor
+            from sam2.sam2_video_predictor import SAM2VideoPredictor
 
-    # Determine base directory where SAM2 package is installed
-    if getattr(sys, 'frozen', False):
-        base_dir = sys._MEIPASS
-    else:
-        import sam2
-        base_dir = os.path.dirname(sam2.__file__)
+            # Find the correct config file based on checkpoint name
+            config_file = self._find_sam2_config()
+            log.info("Using SAM2 config: %s", config_file)
 
-    # Map checkpoint filename to expected config file pattern
-    model_name = os.path.basename(self.model_path).lower()
-    if "tiny" in model_name:
-        target_patterns = ["sam2_hiera_t.yaml", "sam2_hiera_tiny.yaml"]
-    elif "small" in model_name:
-        target_patterns = ["sam2_hiera_s.yaml", "sam2_hiera_small.yaml"]
-    elif "large" in model_name:
-        target_patterns = ["sam2_hiera_l.yaml", "sam2_hiera_large.yaml"]
-    else:  # base or base+
-        target_patterns = ["sam2_hiera_b+.yaml", "sam2_hiera_base.yaml", "sam2_hiera_b_plus.yaml"]
+            sam2_model = build_sam2(
+                config_file=config_file,
+                ckpt_path=self.model_path,
+                device=self.device,
+                apply_postprocessing=True,
+            )
 
-    # Walk the SAM2 directory to find a config file that contains '_target_' (actual model config)
-    for root, _, files in os.walk(base_dir):
-        for file in files:
-            if any(file.endswith(pat) for pat in target_patterns):
-                filepath = os.path.join(root, file)
-                try:
-                    with open(filepath, "r", encoding="utf-8") as f:
-                        if "_target_" in f.read():
-                            return filepath
-                except Exception:
-                    continue
+            self._predictor = SAM2ImagePredictor(sam2_model)
+            self._video_predictor = SAM2VideoPredictor(sam2_model)
+            log.info("SAM2 predictors ready")
 
-    # Fallback: search any YAML containing '_target_' in the sam2 directory
-    for root, _, files in os.walk(base_dir):
-        for file in files:
-            if file.endswith(".yaml"):
-                filepath = os.path.join(root, file)
-                try:
-                    with open(filepath, "r", encoding="utf-8") as f:
-                        if "_target_" in f.read():
-                            log.warning("Using fallback config: %s", filepath)
-                            return filepath
-                except Exception:
-                    continue
+        except Exception as e:
+            log.error("Failed to load SAM2: %s", e)
+            raise
 
-    raise FileNotFoundError(
-        f"Could not find SAM2 config file for {self.model_path} in {base_dir}"
-    )
-    
     def segment_frame(
         self,
         frame: np.ndarray,
