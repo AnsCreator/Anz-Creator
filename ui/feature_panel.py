@@ -711,7 +711,7 @@ class WatermarkRemovalPanel(QWidget):
             try:
                 sp.Popen(["xdg-open", abs_folder])
             except FileNotFoundError:
-                sp.Popen(["open", abs_folder]) 
+                sp.Popen(["open", abs_folder])
 
     # ── Helpers ──────────────────────────────────────────
     def _show_error(self, title: str, msg: str):
