@@ -77,37 +77,38 @@ class SAM2Segmentor:
         raise FileNotFoundError(f"Could not find SAM2 config for {self.model_path} in {base_dir}")
 
     def _load_model(self):
-        """Load SAM2 model using official build_sam2 with explicit config."""
-        if self._predictor is not None:
+        """Load SAM2 model using official builder with explicit config."""
+        if self._predictor is not None and self._video_predictor is not None:
             return
 
         log.info("Loading SAM2 from %s on %s", self.model_path, self.device)
 
         try:
-            from sam2.build_sam import build_sam2
+            # Gunakan builder khusus video dari SAM2
+            from sam2.build_sam import build_sam2_video_predictor
             from sam2.sam2_image_predictor import SAM2ImagePredictor
-            from sam2.sam2_video_predictor import SAM2VideoPredictor
 
             # Find the correct config file based on checkpoint name
             config_file = self._find_sam2_config()
             log.info("Using SAM2 config: %s", config_file)
 
-            sam2_model = build_sam2(
+            # 1. Build Video Predictor terlebih dahulu (Ini akan menghasilkan objek SAM2Base)
+            self._video_predictor = build_sam2_video_predictor(
                 config_file=config_file,
                 ckpt_path=self.model_path,
                 device=self.device,
                 apply_postprocessing=True,
             )
 
-            self._predictor = SAM2ImagePredictor(sam2_model)
-            self._video_predictor = SAM2VideoPredictor(sam2_model)
+            # 2. Image Predictor dapat menggunakan/membungkus objek Video Predictor secara langsung
+            # Ini sangat menghemat VRAM karena tidak perlu load bobot model dua kali
+            self._predictor = SAM2ImagePredictor(self._video_predictor)
+            
             log.info("SAM2 predictors ready")
 
         except Exception as e:
             log.error("Failed to load SAM2: %s", e)
             raise
-
-    # ... (lanjutan segmentasi frame dan propagasi mask) ...
 
     def segment_frame(
         self,
