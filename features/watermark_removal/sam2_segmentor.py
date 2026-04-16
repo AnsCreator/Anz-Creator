@@ -6,7 +6,7 @@ User clicks on watermark → SAM2 segments + propagates across frames.
 from __future__ import annotations
 
 import os
-import sys  # Ditambahkan untuk deteksi PyInstaller
+import sys
 from typing import Callable, Optional
 
 import cv2
@@ -35,8 +35,6 @@ class SAM2Segmentor:
 
         try:
             # --- PATCH HYDRA KHUSUS UNTUK PYINSTALLER ---
-            # Patch ini memaksa Hydra membaca file YAML langsung dari direktori lokal (_MEIPASS)
-            # alih-alih menggunakan package module loader yang rusak di PyInstaller.
             if getattr(sys, 'frozen', False):
                 import sam2.build_sam
                 import hydra
@@ -49,8 +47,7 @@ class SAM2Segmentor:
                     config_dir = os.path.join(sys._MEIPASS, "sam2", "configs")
                     with hydra.initialize_config_dir(config_dir=config_dir, version_base=kwargs.get("version_base", "1.2")):
                         yield
-                
-                # Timpa fungsi pemanggil config di dalam source code SAM2
+
                 sam2.build_sam.initialize_config_module = patched_initialize_config_module
                 log.info("Applied Hydra filesystem patch for PyInstaller")
             # ---------------------------------------------
