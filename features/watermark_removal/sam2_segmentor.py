@@ -83,8 +83,6 @@ class SAM2Segmentor:
         Manually load SAM2 using OmegaConf + instantiate.
         This approach works reliably in PyInstaller-frozen environments.
         """
-        from sam2.modeling.sam2_base import SAM2Base
-
         config_path = self._find_sam2_config()
         log.info("Loading SAM2 config: %s", config_path)
 
