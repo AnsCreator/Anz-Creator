@@ -40,20 +40,18 @@ class SAM2Segmentor:
             from sam2.sam2_image_predictor import SAM2ImagePredictor
             from sam2.sam2_video_predictor import SAM2VideoPredictor
 
-            # Detect model config
             model_cfg = self._detect_model_config()
-            
-            # Try to load with different methods
+
             sam2_model = None
             errors = []
-            
+
             # Method 1: Standard loading
             try:
                 sam2_model = build_sam2(model_cfg, self.model_path, device=self.device)
                 log.info("Model loaded with standard method")
             except Exception as e:
                 errors.append(f"Standard: {e}")
-                
+
             # Method 2: Load with strict=False
             if sam2_model is None:
                 try:
@@ -61,47 +59,35 @@ class SAM2Segmentor:
                     log.info("Model loaded with strict=False")
                 except Exception as e:
                     errors.append(f"Strict=False: {e}")
-            
+
             # Method 3: Load checkpoint manually
             if sam2_model is None:
                 try:
                     from sam2.modeling.sam2_base import SAM2Base
-                    sam2_model = SAM2Base.from_pretrained(self.model_path, device=self.device)
-                    log.info("Model loaded with from_pretrained")
-                except Exception as e:
-                    errors.append(f"From pretrained: {e}")
-            
-            # Method 4: Direct checkpoint load
-            if sam2_model is None:
-                try:
-                    from sam2.modeling.sam2_base import SAM2Base
                     checkpoint = torch.load(self.model_path, map_location=self.device)
-                    
-                    # Try different checkpoint keys
+
                     if 'model' in checkpoint:
                         state_dict = checkpoint['model']
                     elif 'state_dict' in checkpoint:
                         state_dict = checkpoint['state_dict']
                     else:
                         state_dict = checkpoint
-                    
+
                     sam2_model = SAM2Base()
-                    
-                    # Filter and rename keys
+
                     new_state_dict = {}
                     for k, v in state_dict.items():
-                        # Remove 'model.' prefix if exists
                         if k.startswith('model.'):
                             k = k[6:]
                         new_state_dict[k] = v
-                    
+
                     sam2_model.load_state_dict(new_state_dict, strict=False)
                     sam2_model.to(self.device)
                     sam2_model.eval()
                     log.info("Model loaded with manual checkpoint loading")
                 except Exception as e:
                     errors.append(f"Manual checkpoint: {e}")
-            
+
             if sam2_model is None:
                 raise RuntimeError(f"All loading methods failed: {'; '.join(errors)}")
 
