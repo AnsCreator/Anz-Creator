@@ -31,31 +31,40 @@ class SAM2Segmentor:
 
     def _build_sam2_manual(self, config_name: str, ckpt_path: str):
         if getattr(sys, "frozen", False):
-            config_dir = os.path.join(sys._MEIPASS, "sam2", "configs")
+            base_dir = os.path.join(sys._MEIPASS, "sam2")
         else:
             import sam2
 
-            config_dir = os.path.join(os.path.dirname(sam2.__file__), "configs")
+            base_dir = os.path.dirname(sam2.__file__)
 
-        # FIX: Pemetaan nama file yang benar sesuai repositori Meta SAM2
+        # Mapping nama file konfigurasi
         if "tiny" in config_name or "_t" in config_name:
-            model_name = "sam2_hiera_t"
+            target_file = "sam2_hiera_t.yaml"
         elif "small" in config_name or "_s" in config_name:
-            model_name = "sam2_hiera_s"
+            target_file = "sam2_hiera_s.yaml"
         elif "large" in config_name or "_l" in config_name:
-            model_name = "sam2_hiera_l"
+            target_file = "sam2_hiera_l.yaml"
         else:
-            model_name = "sam2_hiera_b+"
+            target_file = "sam2_hiera_b+.yaml"
 
-        model_cfg_path = os.path.join(config_dir, "model", f"{model_name}.yaml")
+        # Auto-Discovery: Cari file secara rekursif ke seluruh subfolder sam2
+        model_cfg_path = None
+        for root, _, files in os.walk(base_dir):
+            if target_file in files:
+                model_cfg_path = os.path.join(root, target_file)
+                break
 
-        if not os.path.exists(model_cfg_path):
-            raise FileNotFoundError(f"SAM2 config not found: {model_cfg_path}")
+        if not model_cfg_path:
+            raise FileNotFoundError(f"SAM2 config '{target_file}' not found anywhere inside {base_dir}")
 
         log.info("Manually loading SAM2 config: %s", model_cfg_path)
         model_cfg = OmegaConf.load(model_cfg_path)
 
-        model = instantiate(model_cfg, _recursive_=True)
+        # SAM2 menyimpan definisi network di bawah key 'model'
+        if "model" in model_cfg:
+            model = instantiate(model_cfg.model, _recursive_=True)
+        else:
+            model = instantiate(model_cfg, _recursive_=True)
 
         log.info("Loading SAM2 weights from: %s", ckpt_path)
         state_dict = torch.load(ckpt_path, map_location="cpu")
