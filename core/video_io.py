@@ -48,8 +48,23 @@ def _app_bin_dir() -> str:
     )
 
 
+def is_ffmpeg_installed() -> bool:
+    """Check if FFmpeg is available in system PATH or local app bin."""
+    if shutil.which("ffmpeg"):
+        return True
+    app_bin = _app_bin_dir()
+    p = os.path.join(app_bin, "ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+    return os.path.isfile(p)
+
+
+def download_ffmpeg(progress_callback=None, cancel_flag=None) -> str:
+    """Trigger manual download of FFmpeg."""
+    app_bin = _app_bin_dir()
+    return _auto_download_ffmpeg(app_bin, progress_callback, cancel_flag)
+
+
 def _find_ffprobe() -> str:
-    """Find ffprobe executable, auto-downloads if needed."""
+    """Find ffprobe executable."""
     found = shutil.which("ffprobe")
     if found:
         return found
@@ -58,17 +73,11 @@ def _find_ffprobe() -> str:
         p = os.path.join(app_bin, name)
         if os.path.isfile(p):
             return p
-    # Auto-download (same package as ffmpeg)
-    if os.name == "nt":
-        _auto_download_ffmpeg(app_bin)
-        p = os.path.join(app_bin, "ffprobe.exe")
-        if os.path.isfile(p):
-            return p
     return "ffprobe"
 
 
 def _find_ffmpeg() -> str:
-    """Find ffmpeg executable, auto-downloads if needed."""
+    """Find ffmpeg executable."""
     found = shutil.which("ffmpeg")
     if found:
         return found
@@ -77,20 +86,15 @@ def _find_ffmpeg() -> str:
         p = os.path.join(app_bin, name)
         if os.path.isfile(p):
             return p
-    # Auto-download
-    if os.name == "nt":
-        return _auto_download_ffmpeg(app_bin)
     return "ffmpeg"
 
 
-def _auto_download_ffmpeg(app_bin: str) -> str:
+def _auto_download_ffmpeg(app_bin: str, progress_callback=None, cancel_flag=None) -> str:
     """
-    Download FFmpeg for Windows from GitHub (BtbN) or gyan.dev fallback.
+    Download FFmpeg for Windows from GitHub or gyan.dev fallback.
     Downloads to disk, extracts ffmpeg.exe + ffprobe.exe to app_bin.
-    Returns path to ffmpeg.exe.
     """
     import zipfile
-
     import requests
 
     SOURCES = [
@@ -109,13 +113,17 @@ def _auto_download_ffmpeg(app_bin: str) -> str:
     ffmpeg_dest = os.path.join(app_bin, "ffmpeg.exe")
 
     if os.path.isfile(ffmpeg_dest):
+        if progress_callback:
+            progress_callback(100, "FFmpeg already installed.")
         return ffmpeg_dest
 
-    # Download to disk (not memory) to avoid OOM crash
     zip_path = os.path.join(app_bin, "ffmpeg_download.zip")
 
     for url, source_name in SOURCES:
         log.info("Downloading FFmpeg from %s…", source_name)
+        if progress_callback:
+            progress_callback(0, f"Connecting to {source_name}…")
+            
         try:
             resp = requests.get(
                 url, stream=True, timeout=(15, 60), allow_redirects=True,
@@ -125,25 +133,28 @@ def _auto_download_ffmpeg(app_bin: str) -> str:
 
             total = int(resp.headers.get("content-length", 0))
             downloaded = 0
-            last_pct = -1
 
             with open(zip_path, "wb") as f:
                 for chunk in resp.iter_content(chunk_size=256 * 1024):
+                    if cancel_flag and cancel_flag():
+                        f.close()
+                        if os.path.exists(zip_path):
+                            os.remove(zip_path)
+                        raise RuntimeError("FFmpeg download cancelled.")
+                        
                     f.write(chunk)
                     downloaded += len(chunk)
-                    if total > 0:
+                    
+                    if total > 0 and progress_callback:
                         pct = downloaded * 100 // total
-                        if pct >= last_pct + 10:
-                            last_pct = pct
-                            log.info(
-                                "FFmpeg download: %d%% (%dMB/%dMB)",
-                                pct,
-                                downloaded // 1048576,
-                                total // 1048576,
-                            )
+                        dl_mb = downloaded // 1048576
+                        tot_mb = total // 1048576
+                        progress_callback(pct, f"Downloading FFmpeg… {dl_mb}/{tot_mb} MB")
 
             log.info("Download complete. Extracting…")
-            break  # success
+            if progress_callback:
+                progress_callback(95, "Extracting FFmpeg… (Please wait)")
+            break  
 
         except Exception as exc:
             log.warning("FFmpeg download from %s failed: %s", source_name, exc)
@@ -155,7 +166,7 @@ def _auto_download_ffmpeg(app_bin: str) -> str:
             continue
     else:
         log.error("All FFmpeg download sources failed.")
-        return "ffmpeg"
+        raise RuntimeError("Failed to download FFmpeg from all sources.")
 
     # Extract only the binaries we need
     try:
@@ -168,17 +179,19 @@ def _auto_download_ffmpeg(app_bin: str) -> str:
                         shutil.copyfileobj(src, dst)
                     log.info("Extracted: %s", target)
 
-        # Clean up zip
         os.remove(zip_path)
 
         if os.path.isfile(ffmpeg_dest):
             log.info("FFmpeg ready: %s", ffmpeg_dest)
+            if progress_callback:
+                progress_callback(100, "FFmpeg installation complete.")
             return ffmpeg_dest
 
     except zipfile.BadZipFile as exc:
         log.error("FFmpeg zip is corrupt: %s", exc)
         if os.path.exists(zip_path):
             os.remove(zip_path)
+        raise RuntimeError(f"Corrupt zip file: {exc}")
     except Exception as exc:
         log.error("FFmpeg extraction failed: %s", exc)
         if os.path.exists(zip_path):
@@ -186,6 +199,7 @@ def _auto_download_ffmpeg(app_bin: str) -> str:
                 os.remove(zip_path)
             except OSError:
                 pass
+        raise
 
     return "ffmpeg"
 
