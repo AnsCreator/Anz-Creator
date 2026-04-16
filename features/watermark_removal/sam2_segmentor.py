@@ -37,32 +37,64 @@ class SAM2Segmentor:
 
             base_dir = os.path.dirname(sam2.__file__)
 
-        # FIX: Kita memotong rantai Hydra dengan memanggil langsung INNER FILE-nya.
-        # File ini memuat struktur "_target_" murni tanpa memicu blok "defaults:".
         if "tiny" in config_name or "_t" in config_name:
-            inner_file = "sam2_hiera_tiny.yaml"
+            target_file = "sam2_hiera_t.yaml"
         elif "small" in config_name or "_s" in config_name:
-            inner_file = "sam2_hiera_small.yaml"
+            target_file = "sam2_hiera_s.yaml"
         elif "large" in config_name or "_l" in config_name:
-            inner_file = "sam2_hiera_large.yaml"
+            target_file = "sam2_hiera_l.yaml"
         else:
-            inner_file = "sam2_hiera_base_plus.yaml"
+            target_file = "sam2_hiera_b+.yaml"
 
-        # Auto-Discovery: Cari file INTI secara rekursif
         model_cfg_path = None
+
+        # Auto-Discovery Cerdas: Cari file yang benar-benar mengandung _target_ (File Inti)
         for root, _, files in os.walk(base_dir):
-            if inner_file in files:
-                model_cfg_path = os.path.join(root, inner_file)
-                break
+            if target_file in files:
+                filepath = os.path.join(root, target_file)
+                try:
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        if "_target_" in f.read():
+                            model_cfg_path = filepath
+                            break
+                except Exception:
+                    pass
+
+        # Fallback kuat jika nama file menggunakan underscore (misal: sam2_hiera_b_plus.yaml)
+        if not model_cfg_path:
+            size_marker = "b+"
+            if "tiny" in target_file:
+                size_marker = "_t"
+            elif "small" in target_file:
+                size_marker = "_s"
+            elif "large" in target_file:
+                size_marker = "_l"
+
+            for root, _, files in os.walk(base_dir):
+                for file in files:
+                    if file.endswith(".yaml") and size_marker in file:
+                        filepath = os.path.join(root, file)
+                        try:
+                            with open(filepath, "r", encoding="utf-8") as f:
+                                if "_target_" in f.read():
+                                    model_cfg_path = filepath
+                                    break
+                        except Exception:
+                            pass
+                if model_cfg_path:
+                    break
 
         if not model_cfg_path:
-            raise FileNotFoundError(f"SAM2 inner config '{inner_file}' not found anywhere inside {base_dir}")
+            raise FileNotFoundError(f"SAM2 inner config containing '_target_' for {target_file} not found in {base_dir}")
 
         log.info("Manually loading SAM2 inner config: %s", model_cfg_path)
         model_cfg = OmegaConf.load(model_cfg_path)
 
-        # Instantiate langsung (Inner config memiliki _target_ di tingkat teratas / root)
-        model = instantiate(model_cfg, _recursive_=True)
+        # Inisialisasi secara dinamis (mendukung struktur YAML root atau child)
+        if "model" in model_cfg and "_target_" in model_cfg.model:
+            model = instantiate(model_cfg.model, _recursive_=True)
+        else:
+            model = instantiate(model_cfg, _recursive_=True)
 
         log.info("Loading SAM2 weights from: %s", ckpt_path)
         state_dict = torch.load(ckpt_path, map_location="cpu")
