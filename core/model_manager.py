@@ -1,11 +1,13 @@
 """
 Model Manager — auto-download, verify, and load AI models.
 Models persist in %APPDATA%/Anz-Creator/models/.
+Pre-bundled models take priority.
 """
 
 from __future__ import annotations
 
 import os
+import sys
 import threading
 from pathlib import Path
 from typing import Callable, Optional
@@ -17,6 +19,13 @@ from utils.logger import log
 
 _APPDATA = os.environ.get("APPDATA", os.path.expanduser("~"))
 MODELS_ROOT = os.path.join(_APPDATA, "Anz-Creator", "models")
+
+
+def _get_bundled_models_path() -> str:
+    """Get path to bundled models (when running as exe)."""
+    if getattr(sys, 'frozen', False):
+        return os.path.join(sys._MEIPASS, "models")
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")
 
 
 class ModelManager:
@@ -38,10 +47,16 @@ class ModelManager:
         self._download_lock = threading.Lock()
         log.info("ModelManager — root: %s", MODELS_ROOT)
 
-    # ── public API ───────────────────────────────────────
     def model_path(self, family: str, variant: str) -> str:
         """Return local path for a model file."""
         ext = ".pt"
+        bundled_path = os.path.join(_get_bundled_models_path(), family, f"{variant}{ext}")
+        
+        # Return bundled path if exists
+        if os.path.isfile(bundled_path):
+            log.info("Using bundled model: %s", bundled_path)
+            return bundled_path
+        
         return os.path.join(MODELS_ROOT, family, f"{variant}{ext}")
 
     def is_downloaded(self, family: str, variant: str) -> bool:
@@ -92,16 +107,14 @@ class ModelManager:
         progress_callback: Optional[Callable[[int, str], None]] = None,
         cancel_flag: Optional[Callable[[], bool]] = None,
     ) -> str:
-        """
-        Download a model if not present. Returns local path.
-        progress_callback(percent, message)
-        Thread-safe: only one download per model at a time.
-        """
+        """Download a model if not present. Returns local path."""
         dest = self.model_path(family, variant)
+        
+        # Already have it (bundled or downloaded)
         if self.is_downloaded(family, variant):
-            log.info("Model already cached: %s", dest)
+            log.info("Model already available: %s", dest)
             if progress_callback:
-                progress_callback(100, f"{variant} ready (cached).")
+                progress_callback(100, f"{variant} ready.")
             return dest
 
         url = self.get_url(family, variant)
@@ -109,11 +122,10 @@ class ModelManager:
             raise ValueError(f"No download URL for {family}/{variant}")
 
         with self._download_lock:
-            # Re-check after acquiring lock
             if self.is_downloaded(family, variant):
                 log.info("Model already cached (after lock): %s", dest)
                 if progress_callback:
-                    progress_callback(100, f"{variant} ready (cached).")
+                    progress_callback(100, f"{variant} ready.")
                 return dest
 
             Path(os.path.dirname(dest)).mkdir(parents=True, exist_ok=True)
