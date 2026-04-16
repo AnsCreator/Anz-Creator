@@ -12,8 +12,6 @@ from typing import Callable, Optional
 import cv2
 import numpy as np
 import torch
-from hydra.utils import instantiate
-from omegaconf import OmegaConf
 
 from utils.logger import log
 
@@ -78,57 +76,28 @@ class SAM2Segmentor:
 
         raise FileNotFoundError(f"Could not find SAM2 config for {self.model_path} in {base_dir}")
 
-    def _load_model_manual(self):
-        """
-        Manually load SAM2 using OmegaConf + instantiate.
-        This approach works reliably in PyInstaller-frozen environments.
-        """
-        config_path = self._find_sam2_config()
-        log.info("Loading SAM2 config: %s", config_path)
-
-        # Load the config
-        cfg = OmegaConf.load(config_path)
-
-        # The config may have a 'model' key; if so, instantiate that
-        if "model" in cfg and "_target_" in cfg.model:
-            model_cfg = cfg.model
-        else:
-            model_cfg = cfg
-
-        log.info("Instantiating SAM2 model...")
-        model = instantiate(model_cfg, _recursive_=True)
-
-        # Load checkpoint
-        log.info("Loading SAM2 weights from: %s", self.model_path)
-        state_dict = torch.load(self.model_path, map_location="cpu")
-        if "model" in state_dict:
-            state_dict = state_dict["model"]
-
-        # Remove any 'module.' prefix if present (from DDP training)
-        new_state_dict = {}
-        for k, v in state_dict.items():
-            if k.startswith("module."):
-                k = k[7:]
-            new_state_dict[k] = v
-
-        model.load_state_dict(new_state_dict, strict=True)
-        model.to(self.device)
-        model.eval()
-
-        return model
-
     def _load_model(self):
-        """Load SAM2 model and initialize predictors."""
+        """Load SAM2 model using official build_sam2 with explicit config."""
         if self._predictor is not None:
             return
 
         log.info("Loading SAM2 from %s on %s", self.model_path, self.device)
 
         try:
+            from sam2.build_sam import build_sam2
             from sam2.sam2_image_predictor import SAM2ImagePredictor
             from sam2.sam2_video_predictor import SAM2VideoPredictor
 
-            sam2_model = self._load_model_manual()
+            # Find the correct config file based on checkpoint name
+            config_file = self._find_sam2_config()
+            log.info("Using SAM2 config: %s", config_file)
+
+            sam2_model = build_sam2(
+                config_file=config_file,
+                ckpt_path=self.model_path,
+                device=self.device,
+                apply_postprocessing=True,
+            )
 
             self._predictor = SAM2ImagePredictor(sam2_model)
             self._video_predictor = SAM2VideoPredictor(sam2_model)
