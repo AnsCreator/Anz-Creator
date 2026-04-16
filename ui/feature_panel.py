@@ -846,7 +846,7 @@ class SettingsPanel(QWidget):
             # 3. Deskripsi Model
             desc_lbl = QLabel(v['description'])
             desc_lbl.setWordWrap(True)
-            desc_lbl.setStyleSheet("color: #888; font-size: 12px; margin-left: 22px;") 
+            desc_lbl.setStyleSheet("color: #888; font-size: 12px; margin-left: 22px;")
             row_lay.addWidget(desc_lbl)
 
             # 4. Progress Bar
