@@ -347,7 +347,6 @@ class WatermarkRemovalPanel(QWidget):
             # 2a: Try FFmpeg
             try:
                 import shutil
-
                 from core.video_io import _app_bin_dir
 
                 ffmpeg_bin = shutil.which("ffmpeg")
@@ -476,7 +475,6 @@ class WatermarkRemovalPanel(QWidget):
                 rgb = result["rgb"]
                 w, h = result["w"], result["h"]
 
-                # Ensure contiguous array for QImage
                 if not rgb.flags["C_CONTIGUOUS"]:
                     import numpy as np
                     rgb = np.ascontiguousarray(rgb)
@@ -507,9 +505,6 @@ class WatermarkRemovalPanel(QWidget):
                 self.progress.reset()
                 log.info("Video displayed: %s", result["path"])
 
-                if os.name == "nt":
-                    self._ensure_ffmpeg_background()
-
             except Exception as exc:
                 import traceback
                 log.error(
@@ -527,33 +522,6 @@ class WatermarkRemovalPanel(QWidget):
         worker.signals.finished.connect(_on_loaded)
         worker.signals.error.connect(_on_load_error)
         self._current_worker = worker
-        self.task_queue.submit(worker)
-
-    def _ensure_ffmpeg_background(self):
-        """Download FFmpeg in background if not present."""
-        import shutil
-
-        from core.video_io import _app_bin_dir
-
-        if shutil.which("ffmpeg"):
-            return
-        app_bin = _app_bin_dir()
-        if os.path.isfile(os.path.join(app_bin, "ffmpeg.exe")):
-            return
-
-        log.info("Scheduling FFmpeg background download…")
-
-        def _dl(progress_callback=None, cancel_flag=None):
-            from core.video_io import _auto_download_ffmpeg
-            return _auto_download_ffmpeg(app_bin)
-
-        worker = Worker(_dl)
-        worker.signals.finished.connect(
-            lambda r: log.info("FFmpeg ready: %s", r)
-        )
-        worker.signals.error.connect(
-            lambda e: log.warning("FFmpeg download failed: %s", e)
-        )
         self.task_queue.submit(worker)
 
     # ── Point tracking ───────────────────────────────────
@@ -593,7 +561,15 @@ class WatermarkRemovalPanel(QWidget):
             "Anz-Creator", "models", "propainter",
         )
 
-        # Check models exist
+        from core.video_io import is_ffmpeg_installed
+        if not is_ffmpeg_installed():
+            QMessageBox.warning(
+                self, "FFmpeg Required",
+                "FFmpeg is required to process videos.\n"
+                "Please go to the Settings tab and download FFmpeg first."
+            )
+            return
+
         missing = []
         if mode == "auto" and not os.path.isfile(yolo_path):
             missing.append(("yolov8", yolo_var))
@@ -640,7 +616,6 @@ class WatermarkRemovalPanel(QWidget):
         self.cancel_btn.setEnabled(True)
         self.progress.reset()
 
-        # Capture values for closure
         _mode = mode
         _click_points = click_points
 
@@ -736,7 +711,7 @@ class WatermarkRemovalPanel(QWidget):
             try:
                 sp.Popen(["xdg-open", abs_folder])
             except FileNotFoundError:
-                sp.Popen(["open", abs_folder])  # macOS
+                sp.Popen(["open", abs_folder]) 
 
     # ── Helpers ──────────────────────────────────────────
     def _show_error(self, title: str, msg: str):
@@ -755,24 +730,22 @@ class SettingsPanel(QWidget):
         self._build_ui()
 
     def _build_ui(self):
-        # 1. Layout dasar untuk memegang area gulir (Scroll Area)
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
 
-        # 2. Membuat QScrollArea
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
 
-        # 3. Membuat kontainer di dalam gulir yang memuat semua elemen
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(16)
 
-        layout.addWidget(SectionHeader("🧠  AI Model Settings"))
+        layout.addWidget(SectionHeader("⚙️  System Dependencies"))
+        layout.addWidget(self._ffmpeg_group())
 
-        # Menampilkan daftar model beserta tombol download manual
+        layout.addWidget(SectionHeader("🧠  AI Model Settings"))
         layout.addWidget(self._model_list_group("YOLOv8 (Auto Detection)", "yolov8"))
         layout.addWidget(self._model_list_group("SAM2 (Manual Segmentation)", "sam2"))
         layout.addWidget(self._model_list_group("ProPainter (Inpainting)", "propainter"))
@@ -789,18 +762,104 @@ class SettingsPanel(QWidget):
 
         layout.addStretch()
 
-        # 4. Masukkan kontainer ke area gulir, dan area gulir ke layout layar
         scroll.setWidget(container)
         root_layout.addWidget(scroll)
 
+    def _ffmpeg_group(self) -> QGroupBox:
+        from core.video_io import is_ffmpeg_installed
+        group = QGroupBox("FFmpeg Engine")
+        group.setStyleSheet("QGroupBox { font-weight: bold; padding-top: 18px; }")
+        lay = QVBoxLayout(group)
+        lay.setSpacing(6)
+
+        row_widget = QWidget()
+        row_lay = QVBoxLayout(row_widget)
+        row_lay.setContentsMargins(4, 6, 4, 6)
+        row_lay.setSpacing(4)
+
+        top_row = QHBoxLayout()
+
+        name_lbl = QLabel("FFmpeg Essentials (≈80MB)")
+        name_lbl.setStyleSheet("font-size: 13px; color: #e0e0e0; font-weight: bold;")
+        top_row.addWidget(name_lbl)
+        top_row.addStretch()
+
+        status_lbl = QLabel("✅ Ready")
+        status_lbl.setStyleSheet("color: #66bb6a; font-weight: bold; font-size: 12px;")
+
+        dl_btn = QPushButton("⬇ Download")
+        dl_btn.setFixedSize(110, 28)
+
+        if is_ffmpeg_installed():
+            dl_btn.hide()
+            top_row.addWidget(status_lbl)
+        else:
+            status_lbl.hide()
+            top_row.addWidget(dl_btn)
+
+        row_lay.addLayout(top_row)
+
+        desc_lbl = QLabel("Required core dependency for video extraction, audio processing, and saving outputs.")
+        desc_lbl.setWordWrap(True)
+        desc_lbl.setStyleSheet("color: #888; font-size: 12px; margin-left: 0px;")
+        row_lay.addWidget(desc_lbl)
+
+        pbar = QProgressBar()
+        pbar.setRange(0, 100)
+        pbar.setFixedHeight(14)
+        pbar.setStyleSheet("QProgressBar { margin-top: 4px; font-size: 10px; }")
+        pbar.hide()
+        row_lay.addWidget(pbar)
+
+        dl_btn.clicked.connect(
+            lambda checked, b=dl_btn, p=pbar, s=status_lbl:
+            self._start_ffmpeg_download(b, p, s)
+        )
+
+        lay.addWidget(row_widget)
+        return group
+
+    def _start_ffmpeg_download(self, btn: QPushButton, pbar: QProgressBar, status_lbl: QLabel):
+        btn.setEnabled(False)
+        pbar.setValue(0)
+        pbar.show()
+
+        from core.video_io import download_ffmpeg
+
+        def _do_download(progress_callback=None, cancel_flag=None):
+            return download_ffmpeg(progress_callback=progress_callback, cancel_flag=cancel_flag)
+
+        def _on_progress(pct, msg):
+            pbar.setValue(pct)
+            if "MB" in msg:
+                mb_text = msg.split("…")[-1].strip()
+                pbar.setFormat(f"%p%  ({mb_text})")
+            else:
+                pbar.setFormat("%p%")
+
+        def _on_finished(result):
+            pbar.hide()
+            btn.hide()
+            status_lbl.show()
+            log.info("FFmpeg manual download complete.")
+
+        def _on_error(err):
+            pbar.hide()
+            btn.setEnabled(True)
+            QMessageBox.critical(self, "Download Error", str(err))
+
+        worker = Worker(_do_download)
+        worker.signals.progress.connect(_on_progress)
+        worker.signals.finished.connect(_on_finished)
+        worker.signals.error.connect(_on_error)
+        TaskQueue().submit(worker)
+
     def _model_list_group(self, title: str, family: str) -> QGroupBox:
-        """Membuat grup yang berisi daftar varian model, deskripsi, dan tombol unduh manual."""
         group = QGroupBox(title)
         group.setStyleSheet("QGroupBox { font-weight: bold; padding-top: 18px; }")
         lay = QVBoxLayout(group)
         lay.setSpacing(6)
 
-        # Mengambil daftar varian dari ModelManager
         variants = self.model_mgr.list_variants(family)
         current = self.settings.get(f"models.{family}")
 
@@ -812,28 +871,24 @@ class SettingsPanel(QWidget):
 
             top_row = QHBoxLayout()
 
-            # 1. Radio Button (Nama Model & Ukuran MB)
             size_text = f"{v['size_mb']}MB" if v.get("size_mb") else f"{v.get('vram_gb', 0)}GB VRAM"
             radio = QRadioButton(f"{v['name']}  ({size_text})")
             radio.setStyleSheet("font-size: 13px; color: #e0e0e0;")
             radio.setMinimumHeight(24)
             radio.setChecked(v['name'] == current)
 
-            # Simpan pengaturan jika radio button dipilih
             radio.toggled.connect(
                 lambda checked, f=family, n=v['name']: self.settings.set(f"models.{f}", n) if checked else None
             )
             top_row.addWidget(radio)
             top_row.addStretch()
 
-            # 2. Label Status dan Tombol Unduh Manual
             status_lbl = QLabel("✅ Ready")
             status_lbl.setStyleSheet("color: #66bb6a; font-weight: bold; font-size: 12px;")
 
             dl_btn = QPushButton("⬇ Download")
             dl_btn.setFixedSize(110, 28)
 
-            # Cek status unduhan
             if v["downloaded"]:
                 dl_btn.hide()
                 top_row.addWidget(status_lbl)
@@ -843,13 +898,11 @@ class SettingsPanel(QWidget):
 
             row_lay.addLayout(top_row)
 
-            # 3. Deskripsi Model
             desc_lbl = QLabel(v['description'])
             desc_lbl.setWordWrap(True)
             desc_lbl.setStyleSheet("color: #888; font-size: 12px; margin-left: 22px;")
             row_lay.addWidget(desc_lbl)
 
-            # 4. Progress Bar
             pbar = QProgressBar()
             pbar.setRange(0, 100)
             pbar.setFixedHeight(14)
@@ -857,7 +910,6 @@ class SettingsPanel(QWidget):
             pbar.hide()
             row_lay.addWidget(pbar)
 
-            # 5. Hubungkan tombol ke fungsi download
             dl_btn.clicked.connect(
                 lambda checked, f=family, var=v['name'], b=dl_btn, p=pbar, s=status_lbl:
                 self._start_manual_download(f, var, b, p, s)
@@ -865,7 +917,6 @@ class SettingsPanel(QWidget):
 
             lay.addWidget(row_widget)
 
-            # 6. Garis pemisah
             if i < len(variants) - 1:
                 line = QFrame()
                 line.setFrameShape(QFrame.Shape.HLine)
@@ -875,7 +926,6 @@ class SettingsPanel(QWidget):
         return group
 
     def _start_manual_download(self, family: str, variant: str, btn: QPushButton, pbar: QProgressBar, status_lbl: QLabel):
-        """Memulai proses unduhan ketika tombol manual ditekan, menampilkan % di Progress Bar."""
         btn.setEnabled(False)
         pbar.setValue(0)
         pbar.show()
