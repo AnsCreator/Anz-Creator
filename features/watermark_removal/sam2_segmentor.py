@@ -30,20 +30,22 @@ class SAM2Segmentor:
         self._video_predictor = None
 
     def _build_sam2_manual(self, config_name: str, ckpt_path: str):
-        if getattr(sys, 'frozen', False):
+        if getattr(sys, "frozen", False):
             config_dir = os.path.join(sys._MEIPASS, "sam2", "configs")
         else:
             import sam2
+
             config_dir = os.path.join(os.path.dirname(sam2.__file__), "configs")
 
+        # FIX: Pemetaan nama file yang benar sesuai repositori Meta SAM2
         if "tiny" in config_name or "_t" in config_name:
-            model_name = "sam2_hiera_tiny"
+            model_name = "sam2_hiera_t"
         elif "small" in config_name or "_s" in config_name:
-            model_name = "sam2_hiera_small"
+            model_name = "sam2_hiera_s"
         elif "large" in config_name or "_l" in config_name:
-            model_name = "sam2_hiera_large"
+            model_name = "sam2_hiera_l"
         else:
-            model_name = "sam2_hiera_base_plus"
+            model_name = "sam2_hiera_b+"
 
         model_cfg_path = os.path.join(config_dir, "model", f"{model_name}.yaml")
 
