@@ -6,14 +6,11 @@ User clicks on watermark → SAM2 segments + propagates across frames.
 from __future__ import annotations
 
 import os
-import sys
 from typing import Callable, Optional
 
 import cv2
 import numpy as np
 import torch
-from hydra.utils import instantiate
-from omegaconf import OmegaConf
 
 from utils.logger import log
 
@@ -29,117 +26,37 @@ class SAM2Segmentor:
         self._predictor = None
         self._video_predictor = None
 
-    def _build_sam2_manual(self, config_name: str, ckpt_path: str):
-        if getattr(sys, "frozen", False):
-            base_dir = sys._MEIPASS
-        else:
-            import sam2
-
-            base_dir = os.path.dirname(sam2.__file__)
-
-        if "tiny" in config_name or "_t" in config_name:
-            target_file = "sam2_hiera_t.yaml"
-        elif "small" in config_name or "_s" in config_name:
-            target_file = "sam2_hiera_s.yaml"
-        elif "large" in config_name or "_l" in config_name:
-            target_file = "sam2_hiera_l.yaml"
-        else:
-            target_file = "sam2_hiera_b+.yaml"
-
-        model_cfg_path = None
-
-        # Auto-Discovery Cerdas: Cari file yang benar-benar mengandung _target_ (File Inti)
-        for root, _, files in os.walk(base_dir):
-            if target_file in files:
-                filepath = os.path.join(root, target_file)
-                try:
-                    with open(filepath, "r", encoding="utf-8") as f:
-                        if "_target_" in f.read():
-                            model_cfg_path = filepath
-                            break
-                except Exception:
-                    pass
-
-        # Fallback kuat jika nama file menggunakan underscore (misal: sam2_hiera_b_plus.yaml)
-        if not model_cfg_path:
-            size_marker = "b+"
-            if "tiny" in target_file:
-                size_marker = "_t"
-            elif "small" in target_file:
-                size_marker = "_s"
-            elif "large" in target_file:
-                size_marker = "_l"
-
-            for root, _, files in os.walk(base_dir):
-                for file in files:
-                    if file.endswith(".yaml") and size_marker in file:
-                        filepath = os.path.join(root, file)
-                        try:
-                            with open(filepath, "r", encoding="utf-8") as f:
-                                if "_target_" in f.read():
-                                    model_cfg_path = filepath
-                                    break
-                        except Exception:
-                            pass
-                if model_cfg_path:
-                    break
-
-        if not model_cfg_path:
-            raise FileNotFoundError(f"SAM2 inner config containing '_target_' for {target_file} not found in {base_dir}")
-
-        log.info("Manually loading SAM2 inner config: %s", model_cfg_path)
-        model_cfg = OmegaConf.load(model_cfg_path)
-
-        # Inisialisasi secara dinamis (mendukung struktur YAML root atau child)
-        if "model" in model_cfg and "_target_" in model_cfg.model:
-            model = instantiate(model_cfg.model, _recursive_=True)
-        else:
-            model = instantiate(model_cfg, _recursive_=True)
-
-        log.info("Loading SAM2 weights from: %s", ckpt_path)
-        state_dict = torch.load(ckpt_path, map_location="cpu")
-        if "model" in state_dict:
-            state_dict = state_dict["model"]
-
-        model.load_state_dict(state_dict, strict=False)
-        model.to(self.device)
-        model.eval()
-
-        return model
-
     def _load_model(self):
+        """Load SAM2 model using official builder (simplified)."""
         if self._predictor is not None:
             return
 
         log.info("Loading SAM2 from %s on %s", self.model_path, self.device)
 
         try:
+            # Use SAM2's official builder - auto-detects config from checkpoint name
+            from sam2.build_sam import build_sam2
             from sam2.sam2_image_predictor import SAM2ImagePredictor
             from sam2.sam2_video_predictor import SAM2VideoPredictor
 
-            config_name = self._detect_model_config()
-            sam2_model = self._build_sam2_manual(config_name, self.model_path)
-
-            log.info("SAM2 model loaded")
+            # build_sam2 handles config file discovery automatically
+            sam2_model = build_sam2(
+                config_file=None,          # Let SAM2 find the matching YAML
+                ckpt_path=self.model_path,
+                device=self.device,
+                apply_postprocessing=True,  # Clean up small mask artifacts
+            )
 
             self._predictor = SAM2ImagePredictor(sam2_model)
             self._video_predictor = SAM2VideoPredictor(sam2_model)
             log.info("SAM2 predictors ready")
 
-        except Exception as exc:
-            log.error("Failed to load SAM2: %s", exc)
+        except ImportError as e:
+            log.error("SAM2 not installed properly: %s", e)
             raise
-
-    def _detect_model_config(self) -> str:
-        model_name = os.path.basename(self.model_path).lower()
-        if "tiny" in model_name:
-            return "sam2_hiera_t.yaml"
-        elif "small" in model_name:
-            return "sam2_hiera_s.yaml"
-        elif "large" in model_name:
-            return "sam2_hiera_l.yaml"
-        else:
-            return "sam2_hiera_b+.yaml"
+        except Exception as e:
+            log.error("Failed to load SAM2: %s", e)
+            raise
 
     def segment_frame(
         self,
