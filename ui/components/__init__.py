@@ -1,26 +1,137 @@
-"""
-Reusable UI components for Anz-Creator.
-"""
-
+# ── Settings Panel ───────────────────────────────────────
 from __future__ import annotations
 
 import os
-from typing import Optional
 
-from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QMouseEvent, QPainter, QPixmap
 from PyQt6.QtWidgets import (
-    QDialog,
-    QFileDialog,
-    QFrame,
+    QComboBox,
+    QGroupBox,
     QLabel,
     QMessageBox,
-    QProgressBar,
-    QPushButton,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
+
+from core.model_manager import ModelManager
+from core.settings import Settings
+from core.task_queue import TaskQueue, Worker
+from ui.components import ModelDownloadDialog, SectionHeader
+from utils.logger import log
+
+class SettingsPanel(QWidget):
+    """Application settings — model selection, paths, preferences."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.settings = Settings()
+        self.model_mgr = ModelManager()
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(16)
+
+        layout.addWidget(SectionHeader("🧠  AI Model Settings"))
+
+        # YOLOv8
+        layout.addWidget(self._model_group(
+            "YOLOv8 (Auto Detection)", "yolov8",
+        ))
+
+        # SAM2
+        layout.addWidget(self._model_group(
+            "SAM2 (Manual Segmentation)", "sam2",
+        ))
+
+        # ProPainter
+        layout.addWidget(self._model_group(
+            "ProPainter (Inpainting)", "propainter",
+        ))
+
+        layout.addWidget(SectionHeader("📂  Paths"))
+        models_dir = os.path.join(
+            os.environ.get("APPDATA", os.path.expanduser("~")),
+            "Anz-Creator", "models",
+        )
+        path_label = QLabel(
+            f"Models stored in: <code>{models_dir}</code>"
+        )
+        path_label.setWordWrap(True)
+        path_label.setStyleSheet("color: #888; font-size: 12px;")
+        layout.addWidget(path_label)
+
+        layout.addStretch()
+
+    def _model_group(self, title: str, family: str) -> QGroupBox:
+        group = QGroupBox(title)
+        lay = QVBoxLayout(group)
+
+        combo = QComboBox()
+        variants = self.model_mgr.list_variants(family)
+        current = self.settings.get(f"models.{family}")
+
+        for v in variants:
+            size = (
+                f"{v['size_mb']}MB"
+                if v.get("size_mb") else f"{v.get('vram_gb', 0)}GB VRAM"
+            )
+            status = " ✓" if v["downloaded"] else ""
+            label = (
+                f"{v['name']}  ({size}) — {v['description']}{status}"
+            )
+            combo.addItem(label, v["name"])
+            if v["name"] == current:
+                combo.setCurrentIndex(combo.count() - 1)
+
+        # Capture family for lambda
+        _family = family
+        combo.currentIndexChanged.connect(
+            lambda idx, f=_family, c=combo: self._on_model_changed(
+                f, c.itemData(idx),
+            )
+        )
+        lay.addWidget(combo)
+        return group
+
+    def _on_model_changed(self, family: str, variant: str):
+        if variant is None:
+            return
+        self.settings.set(f"models.{family}", variant)
+        log.info("Model changed: %s → %s", family, variant)
+
+        if not self.model_mgr.is_downloaded(family, variant):
+            reply = QMessageBox.question(
+                self, "Download Model",
+                f"{variant} is not downloaded yet.\nDownload now?",
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                dlg = ModelDownloadDialog(self)
+                dlg.show()
+
+                _fam = family
+                _var = variant
+
+                def _do_download(
+                    progress_callback=None, cancel_flag=None,
+                ):
+                    return self.model_mgr.download(
+                        _fam, _var,
+                        progress_callback=progress_callback,
+                        cancel_flag=cancel_flag,
+                    )
+
+                worker = Worker(_do_download)
+                worker.signals.progress.connect(dlg.update)
+                worker.signals.finished.connect(lambda _: dlg.close())
+                worker.signals.error.connect(lambda e: (
+                    dlg.close(),
+                    QMessageBox.critical(self, "Error", str(e)),
+                ))
+                dlg.cancel_btn.clicked.connect(worker.cancel)
+                TaskQueue().submit(worker)
 
 
 # ── Styled Progress Bar ─────────────────────────────────
