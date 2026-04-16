@@ -123,7 +123,7 @@ def _auto_download_ffmpeg(app_bin: str, progress_callback=None, cancel_flag=None
         log.info("Downloading FFmpeg from %s…", source_name)
         if progress_callback:
             progress_callback(0, f"Connecting to {source_name}…")
-            
+
         try:
             resp = requests.get(
                 url, stream=True, timeout=(15, 60), allow_redirects=True,
@@ -141,10 +141,10 @@ def _auto_download_ffmpeg(app_bin: str, progress_callback=None, cancel_flag=None
                         if os.path.exists(zip_path):
                             os.remove(zip_path)
                         raise RuntimeError("FFmpeg download cancelled.")
-                        
+
                     f.write(chunk)
                     downloaded += len(chunk)
-                    
+
                     if total > 0 and progress_callback:
                         pct = downloaded * 100 // total
                         dl_mb = downloaded // 1048576
@@ -154,7 +154,7 @@ def _auto_download_ffmpeg(app_bin: str, progress_callback=None, cancel_flag=None
             log.info("Download complete. Extracting…")
             if progress_callback:
                 progress_callback(95, "Extracting FFmpeg… (Please wait)")
-            break  
+            break
 
         except Exception as exc:
             log.warning("FFmpeg download from %s failed: %s", source_name, exc)
