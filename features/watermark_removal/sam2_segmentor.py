@@ -29,94 +29,96 @@ class SAM2Segmentor:
         self._predictor = None
         self._video_predictor = None
 
-    def _build_sam2_manual(self, config_name: str, ckpt_path: str):
-        if getattr(sys, "frozen", False):
+    def _find_sam2_config(self) -> str:
+        """
+        Locate the correct SAM2 YAML config file for the current checkpoint.
+        Searches the SAM2 package directory for a file containing '_target_'
+        that matches the expected model size.
+        """
+        if getattr(sys, 'frozen', False):
             base_dir = sys._MEIPASS
         else:
             import sam2
-
             base_dir = os.path.dirname(sam2.__file__)
 
-        if "tiny" in config_name or "_t" in config_name:
-            target_file = "sam2_hiera_t.yaml"
-        elif "small" in config_name or "_s" in config_name:
-            target_file = "sam2_hiera_s.yaml"
-        elif "large" in config_name or "_l" in config_name:
-            target_file = "sam2_hiera_l.yaml"
+        model_name = os.path.basename(self.model_path).lower()
+        if "tiny" in model_name:
+            target_patterns = ["sam2_hiera_t.yaml", "sam2_hiera_tiny.yaml"]
+        elif "small" in model_name:
+            target_patterns = ["sam2_hiera_s.yaml", "sam2_hiera_small.yaml"]
+        elif "large" in model_name:
+            target_patterns = ["sam2_hiera_l.yaml", "sam2_hiera_large.yaml"]
         else:
-            target_file = "sam2_hiera_b+.yaml"
+            target_patterns = ["sam2_hiera_b+.yaml", "sam2_hiera_base.yaml", "sam2_hiera_b_plus.yaml"]
 
-        model_cfg_path = None
-
-        # Auto-Discovery Anti-Gagal: Cari file yang benar-benar memiliki arsitektur lengkap
+        # Walk the base directory for a config file that contains '_target_' (actual model config)
         for root, _, files in os.walk(base_dir):
-            if target_file in files:
-                filepath = os.path.join(root, target_file)
-                try:
-                    with open(filepath, "r", encoding="utf-8") as f:
-                        content = f.read()
-                        # Hanya memuat file yang memuat komponen neural network inti
-                        if "image_encoder" in content and "memory_attention" in content:
-                            model_cfg_path = filepath
-                            break
-                except Exception:
-                    pass
+            for file in files:
+                if any(file.endswith(pat) for pat in target_patterns):
+                    filepath = os.path.join(root, file)
+                    try:
+                        with open(filepath, "r", encoding="utf-8") as f:
+                            if "_target_" in f.read():
+                                return filepath
+                    except Exception:
+                        continue
 
-        # Fallback jika penamaan file menggunakan variasi yang berbeda
-        if not model_cfg_path:
-            size_marker = "b+"
-            if "tiny" in target_file:
-                size_marker = "_t"
-            elif "small" in target_file:
-                size_marker = "_s"
-            elif "large" in target_file:
-                size_marker = "_l"
+        # Fallback: any YAML with '_target_' in the sam2 folder
+        for root, _, files in os.walk(base_dir):
+            for file in files:
+                if file.endswith(".yaml"):
+                    filepath = os.path.join(root, file)
+                    try:
+                        with open(filepath, "r", encoding="utf-8") as f:
+                            if "_target_" in f.read():
+                                log.warning("Using fallback config: %s", filepath)
+                                return filepath
+                    except Exception:
+                        continue
 
-            for root, _, files in os.walk(base_dir):
-                for file in files:
-                    if file.endswith(".yaml") and size_marker in file:
-                        filepath = os.path.join(root, file)
-                        try:
-                            with open(filepath, "r", encoding="utf-8") as f:
-                                content = f.read()
-                                if "image_encoder" in content and "memory_attention" in content:
-                                    model_cfg_path = filepath
-                                    break
-                        except Exception:
-                            pass
-                if model_cfg_path:
-                    break
+        raise FileNotFoundError(f"Could not find SAM2 config for {self.model_path} in {base_dir}")
 
-        if not model_cfg_path:
-            raise FileNotFoundError(f"SAM2 inner config containing architecture for {target_file} not found in {base_dir}")
+    def _load_model_manual(self):
+        """
+        Manually load SAM2 using OmegaConf + instantiate.
+        This approach works reliably in PyInstaller-frozen environments.
+        """
+        config_path = self._find_sam2_config()
+        log.info("Loading SAM2 config: %s", config_path)
 
-        log.info("Manually loading SAM2 inner config: %s", model_cfg_path)
-        model_cfg = OmegaConf.load(model_cfg_path)
+        # Load the config
+        cfg = OmegaConf.load(config_path)
 
-        # Tangani jika struktur berada di dalam 'model' atau langsung di root
-        if "model" in model_cfg and "image_encoder" in model_cfg.model:
-            cfg_to_instantiate = model_cfg.model
+        # The config may have a 'model' key; if so, instantiate that
+        if "model" in cfg and "_target_" in cfg.model:
+            model_cfg = cfg.model
         else:
-            cfg_to_instantiate = model_cfg
+            model_cfg = cfg
 
-        # Paksa target menjadi SAM2VideoPredictor
-        cfg_to_instantiate["_target_"] = "sam2.sam2_video_predictor.SAM2VideoPredictor"
+        log.info("Instantiating SAM2 model...")
+        model = instantiate(model_cfg, _recursive_=True)
 
-        log.info("Instantiating SAM2 Video Predictor...")
-        model = instantiate(cfg_to_instantiate, _recursive_=True)
-
-        log.info("Loading SAM2 weights from: %s", ckpt_path)
-        state_dict = torch.load(ckpt_path, map_location="cpu")
+        # Load checkpoint
+        log.info("Loading SAM2 weights from: %s", self.model_path)
+        state_dict = torch.load(self.model_path, map_location="cpu")
         if "model" in state_dict:
             state_dict = state_dict["model"]
 
-        model.load_state_dict(state_dict, strict=False)
+        # Remove any 'module.' prefix if present (from DDP training)
+        new_state_dict = {}
+        for k, v in state_dict.items():
+            if k.startswith("module."):
+                k = k[7:]
+            new_state_dict[k] = v
+
+        model.load_state_dict(new_state_dict, strict=True)
         model.to(self.device)
         model.eval()
 
         return model
 
     def _load_model(self):
+        """Load SAM2 model and initialize predictors."""
         if self._predictor is not None:
             return
 
@@ -124,32 +126,17 @@ class SAM2Segmentor:
 
         try:
             from sam2.sam2_image_predictor import SAM2ImagePredictor
+            from sam2.sam2_video_predictor import SAM2VideoPredictor
 
-            config_name = self._detect_model_config()
-            sam2_video_model = self._build_sam2_manual(config_name, self.model_path)
+            sam2_model = self._load_model_manual()
 
-            log.info("SAM2 model loaded successfully")
-
-            # Inisialisasi ganda tanpa pemborosan RAM
-            self._video_predictor = sam2_video_model
-            self._predictor = SAM2ImagePredictor(sam2_video_model)
-            
+            self._predictor = SAM2ImagePredictor(sam2_model)
+            self._video_predictor = SAM2VideoPredictor(sam2_model)
             log.info("SAM2 predictors ready")
 
-        except Exception as exc:
-            log.error("Failed to load SAM2: %s", exc)
+        except Exception as e:
+            log.error("Failed to load SAM2: %s", e)
             raise
-
-    def _detect_model_config(self) -> str:
-        model_name = os.path.basename(self.model_path).lower()
-        if "tiny" in model_name:
-            return "sam2_hiera_t.yaml"
-        elif "small" in model_name:
-            return "sam2_hiera_s.yaml"
-        elif "large" in model_name:
-            return "sam2_hiera_l.yaml"
-        else:
-            return "sam2_hiera_b+.yaml"
 
     def segment_frame(
         self,
