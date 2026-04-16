@@ -3,6 +3,10 @@
 import os
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
+# 1. Automatically collect ALL submodules and data files (like YAML configs) for SAM2
+sam2_hidden = collect_submodules('sam2')
+sam2_datas = collect_data_files('sam2')
+
 a = Analysis(
     ['main.py'],
     pathex=[],
@@ -10,7 +14,7 @@ a = Analysis(
     datas=[
         ('config.yaml', '.'),
         ('version.txt', '.'),
-    ],
+    ] + sam2_datas,  # 2. Append the collected SAM2 config files here
     hiddenimports=[
         'PyQt6',
         'PyQt6.QtCore',
@@ -19,10 +23,7 @@ a = Analysis(
         'PyQt6.sip',
         'qt_material',
         'qt_material.resources',
-        'sam2',
-        'sam2.build_sam',
-        'sam2.sam2_image_predictor',
-        'sam2.sam2_video_predictor',
+        # Replaced the manual sam2 imports with sam2_hidden below
         'ultralytics',
         'torch',
         'torchvision',
@@ -35,7 +36,7 @@ a = Analysis(
         'hydra',
         'omegaconf',
         'tqdm',
-    ],
+    ] + sam2_hidden, # 3. Append all SAM2 internal modeling files here
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
