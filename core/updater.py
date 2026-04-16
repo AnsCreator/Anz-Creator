@@ -1,22 +1,13 @@
 """
 Auto-Updater — check GitHub releases and download updates.
-
-Update flow for PyInstaller onefile builds:
-1. App downloads update.zip to %APPDATA%/Anz-Creator/updates/
-2. App creates update.bat with its own PID embedded
-3. App launches update.bat (detached) and calls sys.exit()
-4. Batch script:
-   a. Waits for the app process to fully terminate (by PID)
-   b. Cleans up leftover _MEI temp folders from PyInstaller
-   c. Extracts update.zip over the app directory
-   d. Restarts the new exe
-   e. Deletes itself
+Supports Windows, macOS, and Linux.
 """
 
 from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from typing import Callable, Optional
 
 import requests
@@ -89,18 +80,19 @@ def check_for_update() -> Optional[dict]:
             log.info("Already up to date: %s", current)
             return None
 
-        # Find Windows zip asset
+        # Find platform-specific asset
         download_url = ""
         size = 0
+        platform_keywords = _get_platform_asset_keywords()
         for asset in data.get("assets", []):
             name = asset.get("name", "")
-            if "Windows" in name and name.endswith(".zip"):
+            if any(kw in name for kw in platform_keywords) and name.endswith(".zip"):
                 download_url = asset.get("browser_download_url", "")
                 size = asset.get("size", 0)
                 break
 
         if not download_url:
-            log.warning("No Windows asset found in release %s", latest_tag)
+            log.warning("No asset found for this platform in release %s", latest_tag)
             return None
 
         log.info("Update available: %s → %s", current, latest_tag)
@@ -117,6 +109,16 @@ def check_for_update() -> Optional[dict]:
     except (ValueError, KeyError) as exc:
         log.warning("Update check failed (parse): %s", exc)
         return None
+
+
+def _get_platform_asset_keywords() -> list[str]:
+    """Return keywords to identify the correct asset for current OS."""
+    if sys.platform == "win32":
+        return ["Windows", "win64", "win32"]
+    elif sys.platform == "darwin":
+        return ["macOS", "darwin", "mac"]
+    else:
+        return ["Linux", "linux"]
 
 
 def download_update(
@@ -140,13 +142,28 @@ def download_update(
     if progress_callback:
         progress_callback(0, "Downloading update…")
 
-    try:
-        resp = requests.get(url, stream=True, timeout=120, allow_redirects=True)
-        resp.raise_for_status()
-        total = int(resp.headers.get("content-length", 0))
-        downloaded = 0
+    # Resume support
+    headers = {}
+    existing_size = 0
+    if os.path.exists(tmp):
+        existing_size = os.path.getsize(tmp)
+        if existing_size > 0:
+            headers["Range"] = f"bytes={existing_size}-"
+            log.info("Resuming update download from byte %d", existing_size)
 
-        with open(tmp, "wb") as f:
+    try:
+        resp = requests.get(url, stream=True, timeout=120, allow_redirects=True, headers=headers)
+        if resp.status_code == 416:
+            os.remove(tmp)
+            existing_size = 0
+            resp = requests.get(url, stream=True, timeout=120, allow_redirects=True)
+        resp.raise_for_status()
+
+        total = int(resp.headers.get("content-length", 0)) + existing_size
+        downloaded = existing_size
+
+        mode = "ab" if existing_size > 0 else "wb"
+        with open(tmp, mode) as f:
             for chunk in resp.iter_content(chunk_size=256 * 1024):
                 if cancel_flag and cancel_flag():
                     log.info("Update download cancelled.")
@@ -184,28 +201,28 @@ def download_update(
         raise
 
 
+def apply_update(zip_path: str) -> str:
+    """
+    Create a platform-specific update script and return its path.
+    """
+    if not os.path.isfile(zip_path):
+        raise FileNotFoundError(f"Update zip not found: {zip_path}")
+
+    if sys.platform == "win32":
+        return _create_windows_updater(zip_path)
+    elif sys.platform == "darwin":
+        return _create_macos_updater(zip_path)
+    else:
+        return _create_linux_updater(zip_path)
+
+
 def _escape_batch_path(path: str) -> str:
     """Escape a path for safe use in a Windows batch script."""
     return path.replace("^", "^^").replace("&", "^&").replace("|", "^|")
 
 
-def apply_update(zip_path: str) -> str:
-    """
-    Create a batch script that properly handles the update process:
-
-    1. Force-kills the app by PID (not just asking it to quit)
-    2. Polls until the process is actually dead (up to 30 seconds)
-    3. Cleans up PyInstaller _MEI temp folders that lock DLLs
-    4. Extracts update zip over the app directory
-    5. Restarts the new exe
-    6. Deletes itself
-
-    Returns path to the batch script.
-    """
-    if not os.path.isfile(zip_path):
-        raise FileNotFoundError(f"Update zip not found: {zip_path}")
-
-    # Determine app directory and executable
+def _create_windows_updater(zip_path: str) -> str:
+    """Create Windows batch script for updating."""
     if getattr(sys, "frozen", False):
         app_dir = os.path.dirname(sys.executable)
         app_exe = sys.executable
@@ -218,11 +235,9 @@ def apply_update(zip_path: str) -> str:
     update_dir = os.path.dirname(zip_path)
     batch_path = os.path.join(update_dir, "update.bat")
 
-    # Escape paths for PowerShell single-quoted strings
     ps_zip = zip_path.replace("'", "''")
     ps_app = app_dir.replace("'", "''")
 
-    # Build batch script
     lines = [
         '@echo off',
         'chcp 65001 >nul 2>&1',
@@ -231,12 +246,8 @@ def apply_update(zip_path: str) -> str:
         'echo   Anz-Creator Auto-Updater',
         'echo ========================================',
         'echo.',
-        '',
-        'REM ── Step 1: Kill the app process by PID ──',
         f'echo Stopping Anz-Creator (PID {app_pid})...',
         f'taskkill /F /PID {app_pid} >nul 2>&1',
-        '',
-        'REM ── Step 2: Wait until process is fully dead ──',
         'echo Waiting for process to exit...',
         'set /a TRIES=0',
         ':WAIT_LOOP',
@@ -245,7 +256,6 @@ def apply_update(zip_path: str) -> str:
         'set /a TRIES+=1',
         'if %TRIES% GEQ 30 (',
         '    echo ERROR: Process did not exit after 30 seconds.',
-        '    echo Please close Anz-Creator manually and run this script again.',
         '    pause',
         '    exit /b 1',
         ')',
@@ -253,37 +263,23 @@ def apply_update(zip_path: str) -> str:
         'goto WAIT_LOOP',
         ':PROCESS_DEAD',
         'echo Process terminated.',
-        '',
-        'REM ── Step 3: Extra wait for file handles to release ──',
         'timeout /t 3 /nobreak >nul',
-        '',
-        'REM ── Step 4: Clean up PyInstaller _MEI temp folders ──',
         'echo Cleaning up temp files...',
-        'for /d %%D in ("%LOCALAPPDATA%\\Temp\\_MEI*") do (',
-        '    rd /s /q "%%D" >nul 2>&1',
-        ')',
-        '',
-        'REM ── Step 5: Extract update ──',
+        'for /d %%D in ("%LOCALAPPDATA%\\Temp\\_MEI*") do rd /s /q "%%D" >nul 2>&1',
         'echo Extracting update...',
         "powershell -NoProfile -Command \""
         f"try {{ Expand-Archive -Path '{ps_zip}'"
         f" -DestinationPath '{ps_app}' -Force;"
         " Write-Host 'Extraction successful.' }}"
-        " catch { Write-Host ('Extraction failed: '"
-        " + $_.Exception.Message);"
+        " catch { Write-Host ('Extraction failed: ' + $_.Exception.Message);"
         " Read-Host 'Press Enter to exit'; exit 1 }\"",
-        '',
         'if errorlevel 1 (',
         '    echo Update extraction failed!',
         '    pause',
         '    exit /b 1',
         ')',
-        '',
-        'REM ── Step 6: Clean up zip ──',
         'echo Cleaning up...',
         f'del "{_escape_batch_path(zip_path)}" >nul 2>&1',
-        '',
-        'REM ── Step 7: Restart app ──',
         'echo Starting Anz-Creator...',
     ]
 
@@ -297,22 +293,92 @@ def apply_update(zip_path: str) -> str:
         )
 
     lines.extend([
-        '',
         'echo.',
         'echo ========================================',
         'echo   Update complete!',
         'echo ========================================',
         'timeout /t 2 /nobreak >nul',
-        '',
-        'REM ── Step 8: Self-delete ──',
         'del "%~f0" >nul 2>&1',
         'exit',
     ])
 
     batch_content = "\r\n".join(lines) + "\r\n"
-
     with open(batch_path, "w", encoding="utf-8") as f:
         f.write(batch_content)
 
-    log.info("Update script created: %s (target PID: %d)", batch_path, app_pid)
+    log.info("Windows update script created: %s", batch_path)
     return batch_path
+
+
+def _create_macos_updater(zip_path: str) -> str:
+    """Create macOS shell script for updating."""
+    if getattr(sys, "frozen", False):
+        app_dir = os.path.dirname(sys.executable)
+        app_exe = sys.executable
+    else:
+        app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        app_exe = sys.executable
+
+    update_dir = os.path.dirname(zip_path)
+    script_path = os.path.join(update_dir, "update.sh")
+    pid = os.getpid()
+
+    script_content = f"""#!/bin/bash
+echo "Stopping Anz-Creator (PID {pid})..."
+kill -9 {pid} 2>/dev/null
+sleep 3
+
+echo "Extracting update..."
+unzip -o "{zip_path}" -d "{app_dir}"
+
+rm -f "{zip_path}"
+
+echo "Restarting Anz-Creator..."
+if [[ "{app_exe}" == *.app/Contents/MacOS/* ]]; then
+    open "$(dirname "$(dirname "{app_exe}")")"
+else
+    "{app_exe}" "$(dirname "{app_dir}")/main.py" &
+fi
+
+rm -- "$0"
+"""
+    with open(script_path, "w") as f:
+        f.write(script_content)
+    os.chmod(script_path, 0o755)
+    log.info("macOS update script created: %s", script_path)
+    return script_path
+
+
+def _create_linux_updater(zip_path: str) -> str:
+    """Create Linux shell script for updating."""
+    if getattr(sys, "frozen", False):
+        app_dir = os.path.dirname(sys.executable)
+        app_exe = sys.executable
+    else:
+        app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        app_exe = sys.executable
+
+    update_dir = os.path.dirname(zip_path)
+    script_path = os.path.join(update_dir, "update.sh")
+    pid = os.getpid()
+
+    script_content = f"""#!/bin/bash
+echo "Stopping Anz-Creator (PID {pid})..."
+kill -9 {pid} 2>/dev/null
+sleep 3
+
+echo "Extracting update..."
+unzip -o "{zip_path}" -d "{app_dir}"
+
+rm -f "{zip_path}"
+
+echo "Restarting Anz-Creator..."
+"{app_exe}" "{app_dir}/main.py" &
+
+rm -- "$0"
+"""
+    with open(script_path, "w") as f:
+        f.write(script_content)
+    os.chmod(script_path, 0o755)
+    log.info("Linux update script created: %s", script_path)
+    return script_path
