@@ -75,12 +75,13 @@ jobs:
           pip install PyQt6 qt-material
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install PyYAML yt-dlp opencv-python ultralytics numpy Pillow scenedetect requests
+          pip install hydra-core omegaconf iopath fvcore yacs tqdm
           pip install pyinstaller
 
       - name: Clone SAM2
         run: |
           git clone --depth 1 https://github.com/facebookresearch/segment-anything-2.git
-          echo "SAM2 cloned to: $pwd\segment-anything-2"
+          echo "SAM2 cloned"
 
       - name: Fix SAM2 symbolic links
         run: |
@@ -118,10 +119,20 @@ jobs:
             --hidden-import sam2.sam2_video_predictor `
             --hidden-import sam2.modeling `
             --hidden-import sam2.utils `
+            --hidden-import hydra `
+            --hidden-import hydra._internal `
+            --hidden-import hydra.core `
+            --hidden-import omegaconf `
+            --hidden-import iopath `
+            --hidden-import fvcore `
+            --hidden-import yacs `
+            --hidden-import tqdm `
             --hidden-import ultralytics `
             --hidden-import torch `
             --hidden-import cv2 `
             --collect-all sam2 `
+            --collect-all hydra `
+            --collect-all omegaconf `
             --icon icon.ico `
             main.py
 
