@@ -12,6 +12,8 @@ from typing import Callable, Optional
 import cv2
 import numpy as np
 import torch
+from hydra.utils import instantiate
+from omegaconf import OmegaConf
 
 from utils.logger import log
 
@@ -27,6 +29,43 @@ class SAM2Segmentor:
         self._predictor = None
         self._video_predictor = None
 
+    def _build_sam2_manual(self, config_name: str, ckpt_path: str):
+        if getattr(sys, 'frozen', False):
+            config_dir = os.path.join(sys._MEIPASS, "sam2", "configs")
+        else:
+            import sam2
+            config_dir = os.path.join(os.path.dirname(sam2.__file__), "configs")
+
+        if "tiny" in config_name or "_t" in config_name:
+            model_name = "sam2_hiera_tiny"
+        elif "small" in config_name or "_s" in config_name:
+            model_name = "sam2_hiera_small"
+        elif "large" in config_name or "_l" in config_name:
+            model_name = "sam2_hiera_large"
+        else:
+            model_name = "sam2_hiera_base_plus"
+
+        model_cfg_path = os.path.join(config_dir, "model", f"{model_name}.yaml")
+
+        if not os.path.exists(model_cfg_path):
+            raise FileNotFoundError(f"SAM2 config not found: {model_cfg_path}")
+
+        log.info("Manually loading SAM2 config: %s", model_cfg_path)
+        model_cfg = OmegaConf.load(model_cfg_path)
+
+        model = instantiate(model_cfg, _recursive_=True)
+
+        log.info("Loading SAM2 weights from: %s", ckpt_path)
+        state_dict = torch.load(ckpt_path, map_location="cpu")
+        if "model" in state_dict:
+            state_dict = state_dict["model"]
+
+        model.load_state_dict(state_dict, strict=False)
+        model.to(self.device)
+        model.eval()
+
+        return model
+
     def _load_model(self):
         if self._predictor is not None:
             return
@@ -34,37 +73,12 @@ class SAM2Segmentor:
         log.info("Loading SAM2 from %s on %s", self.model_path, self.device)
 
         try:
-            # --- PATCH HYDRA KHUSUS UNTUK PYINSTALLER ---
-            if getattr(sys, 'frozen', False):
-                from contextlib import contextmanager
-
-                import hydra
-                import sam2.build_sam
-                from hydra.core.global_hydra import GlobalHydra
-
-                @contextmanager
-                def patched_initialize_config_module(*args, **kwargs):
-                    GlobalHydra.instance().clear()
-                    config_dir = os.path.join(sys._MEIPASS, "sam2", "configs")
-                    with hydra.initialize_config_dir(config_dir=config_dir, version_base=kwargs.get("version_base", "1.2")):
-                        yield
-
-                sam2.build_sam.initialize_config_module = patched_initialize_config_module
-                log.info("Applied Hydra filesystem patch for PyInstaller")
-            # ---------------------------------------------
-
-            from sam2.build_sam import build_sam2
             from sam2.sam2_image_predictor import SAM2ImagePredictor
             from sam2.sam2_video_predictor import SAM2VideoPredictor
 
-            model_cfg = self._detect_model_config()
+            config_name = self._detect_model_config()
+            sam2_model = self._build_sam2_manual(config_name, self.model_path)
 
-            sam2_model = build_sam2(
-                model_cfg,
-                self.model_path,
-                device=self.device,
-                strict=False
-            )
             log.info("SAM2 model loaded")
 
             self._predictor = SAM2ImagePredictor(sam2_model)
