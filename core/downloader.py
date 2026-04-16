@@ -11,8 +11,12 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
+from urllib.parse import urlparse
+
+import requests
 
 from utils.logger import log
 
@@ -30,12 +34,15 @@ class VideoMeta:
 
 
 def _normalize_url(url: str) -> str:
-    """Ensure URL has https:// prefix."""
+    """Ensure URL has https:// prefix and validate scheme."""
     url = url.strip().strip("\"'")
     if not url:
         return url
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Unsupported URL scheme: {parsed.scheme}")
     return url
 
 
@@ -56,13 +63,33 @@ def _startupinfo():
     return None
 
 
+def _acquire_file_lock(fd):
+    """Acquire an exclusive lock on the open file descriptor."""
+    if os.name == "nt":
+        import msvcrt
+        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+
+def _release_file_lock(fd):
+    """Release the lock on the file descriptor."""
+    if os.name == "nt":
+        import msvcrt
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
 def _find_ytdlp() -> str:
     """
     Find yt-dlp executable. Search order:
     1. Bundled in app data folder (previously auto-downloaded)
     2. System PATH
     3. Python Scripts folder (pip install location on Windows)
-    4. Auto-download standalone .exe from GitHub releases
+    4. Auto-download standalone .exe from GitHub releases (with locking)
     """
     # App-local location (auto-downloaded binary lives here)
     app_bin_dir = os.path.join(
@@ -106,32 +133,57 @@ def _find_ytdlp() -> str:
                 log.info("yt-dlp found: %s", p)
                 return p
 
-    # 3. Auto-download standalone exe from GitHub releases
+    # 3. Auto-download standalone exe from GitHub releases (with locking)
     log.warning("yt-dlp not found — downloading standalone exe…")
+    os.makedirs(app_bin_dir, exist_ok=True)
+    tmp_path = app_ytdlp + ".part"
+    lock_file = app_ytdlp + ".lock"
+
+    # Use a lock file to prevent concurrent downloads
+    lock_fd = os.open(lock_file, os.O_CREAT | os.O_RDWR)
     try:
-        import requests
+        _acquire_file_lock(lock_fd)
+
+        # Double-check after acquiring lock
+        if os.path.isfile(app_ytdlp):
+            return app_ytdlp
 
         if os.name == "nt":
-            url = (
-                "https://github.com/yt-dlp/yt-dlp/releases/"
-                "latest/download/yt-dlp.exe"
-            )
+            url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
         else:
-            url = (
-                "https://github.com/yt-dlp/yt-dlp/releases/"
-                "latest/download/yt-dlp_linux"
-            )
+            url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"
 
-        os.makedirs(app_bin_dir, exist_ok=True)
-        tmp_path = app_ytdlp + ".part"
+        # --- Download with resume support ---
+        headers = {}
+        existing_size = 0
+        if os.path.exists(tmp_path):
+            existing_size = os.path.getsize(tmp_path)
+            if existing_size > 0:
+                headers["Range"] = f"bytes={existing_size}-"
+                log.info("Resuming yt-dlp download from byte %d", existing_size)
 
         log.info("Downloading yt-dlp from %s …", url)
-        resp = requests.get(url, stream=True, timeout=60, allow_redirects=True)
+        resp = requests.get(url, stream=True, timeout=60, allow_redirects=True, headers=headers)
+
+        if resp.status_code == 416:
+            # Range not satisfiable - file is complete but maybe corrupted
+            log.warning("Resume failed, starting fresh")
+            os.remove(tmp_path)
+            existing_size = 0
+            headers.pop("Range", None)
+            resp = requests.get(url, stream=True, timeout=60, allow_redirects=True)
+
         resp.raise_for_status()
 
-        with open(tmp_path, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=256 * 1024):
-                f.write(chunk)
+        # Open file with locking
+        with open(tmp_path, "ab" if existing_size > 0 else "wb") as f:
+            # Lock the file descriptor
+            _acquire_file_lock(f.fileno())
+            try:
+                for chunk in resp.iter_content(chunk_size=256 * 1024):
+                    f.write(chunk)
+            finally:
+                _release_file_lock(f.fileno())
 
         # Verify file is not empty
         if os.path.getsize(tmp_path) == 0:
@@ -150,19 +202,19 @@ def _find_ytdlp() -> str:
     except Exception as exc:
         log.error("Failed to download yt-dlp: %s", exc)
         # Clean up partial file
-        tmp_path = app_ytdlp + ".part"
         if os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
             except OSError:
                 pass
-
-    raise FileNotFoundError(
-        "yt-dlp not found and auto-download failed.\n"
-        "Please install manually:\n"
-        "  pip install yt-dlp\n"
-        "Or download from: https://github.com/yt-dlp/yt-dlp/releases"
-    )
+        raise
+    finally:
+        _release_file_lock(lock_fd)
+        os.close(lock_fd)
+        try:
+            os.remove(lock_file)
+        except OSError:
+            pass
 
 
 class Downloader:
