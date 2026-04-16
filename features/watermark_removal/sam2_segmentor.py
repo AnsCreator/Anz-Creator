@@ -103,7 +103,7 @@ class SAM2Segmentor:
             # 2. Image Predictor dapat menggunakan/membungkus objek Video Predictor secara langsung
             # Ini sangat menghemat VRAM karena tidak perlu load bobot model dua kali
             self._predictor = SAM2ImagePredictor(self._video_predictor)
-            
+
             log.info("SAM2 predictors ready")
 
         except Exception as e:
