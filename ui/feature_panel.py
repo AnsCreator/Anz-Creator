@@ -743,8 +743,31 @@ class WatermarkRemovalPanel(QWidget):
 
 
 # ── Settings Panel ───────────────────────────────────────
+from __future__ import annotations
+
+import os
+
+from PyQt6.QtWidgets import (
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QRadioButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from core.model_manager import ModelManager
+from core.settings import Settings
+from core.task_queue import TaskQueue, Worker
+from ui.components import SectionHeader
+from utils.logger import log
+
 class SettingsPanel(QWidget):
-    """Application settings — model selection, paths, preferences."""
+    """Application settings — model selection, manual downloads, paths."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -759,101 +782,127 @@ class SettingsPanel(QWidget):
 
         layout.addWidget(SectionHeader("🧠  AI Model Settings"))
 
-        # YOLOv8
-        layout.addWidget(self._model_group(
-            "YOLOv8 (Auto Detection)", "yolov8",
-        ))
-
-        # SAM2
-        layout.addWidget(self._model_group(
-            "SAM2 (Manual Segmentation)", "sam2",
-        ))
-
-        # ProPainter
-        layout.addWidget(self._model_group(
-            "ProPainter (Inpainting)", "propainter",
-        ))
+        # Menampilkan daftar model beserta tombol download manual
+        layout.addWidget(self._model_list_group("YOLOv8 (Auto Detection)", "yolov8"))
+        layout.addWidget(self._model_list_group("SAM2 (Manual Segmentation)", "sam2"))
+        layout.addWidget(self._model_list_group("ProPainter (Inpainting)", "propainter"))
 
         layout.addWidget(SectionHeader("📂  Paths"))
         models_dir = os.path.join(
             os.environ.get("APPDATA", os.path.expanduser("~")),
             "Anz-Creator", "models",
         )
-        path_label = QLabel(
-            f"Models stored in: <code>{models_dir}</code>"
-        )
+        path_label = QLabel(f"Models stored in: <code>{models_dir}</code>")
         path_label.setWordWrap(True)
         path_label.setStyleSheet("color: #888; font-size: 12px;")
         layout.addWidget(path_label)
 
         layout.addStretch()
 
-    def _model_group(self, title: str, family: str) -> QGroupBox:
+    def _model_list_group(self, title: str, family: str) -> QGroupBox:
+        """Membuat grup yang berisi daftar varian model, deskripsi, dan tombol unduh manual."""
         group = QGroupBox(title)
         lay = QVBoxLayout(group)
+        lay.setSpacing(8)
 
-        combo = QComboBox()
+        # Mengambil daftar varian dari ModelManager
         variants = self.model_mgr.list_variants(family)
         current = self.settings.get(f"models.{family}")
 
         for v in variants:
-            size = (
-                f"{v['size_mb']}MB"
-                if v.get("size_mb") else f"{v.get('vram_gb', 0)}GB VRAM"
-            )
-            status = " ✓" if v["downloaded"] else ""
-            label = (
-                f"{v['name']}  ({size}) — {v['description']}{status}"
-            )
-            combo.addItem(label, v["name"])
-            if v["name"] == current:
-                combo.setCurrentIndex(combo.count() - 1)
+            row_widget = QWidget()
+            row_lay = QVBoxLayout(row_widget)
+            row_lay.setContentsMargins(0, 4, 0, 4)
+            row_lay.setSpacing(4)
 
-        # Capture family for lambda
-        _family = family
-        combo.currentIndexChanged.connect(
-            lambda idx, f=_family, c=combo: self._on_model_changed(
-                f, c.itemData(idx),
+            top_row = QHBoxLayout()
+            
+            # 1. Radio Button (Nama, Deskripsi, Ukuran MB)
+            size_text = f"{v['size_mb']}MB" if v.get("size_mb") else f"{v.get('vram_gb', 0)}GB VRAM"
+            radio = QRadioButton(f"{v['name']}  —  {v['description']} ({size_text})")
+            radio.setChecked(v['name'] == current)
+            
+            # Simpan pengaturan jika radio button dipilih
+            radio.toggled.connect(
+                lambda checked, f=family, n=v['name']: self.settings.set(f"models.{f}", n) if checked else None
             )
-        )
-        lay.addWidget(combo)
+            top_row.addWidget(radio)
+            top_row.addStretch()
+
+            # 2. Label Status dan Tombol Unduh Manual
+            status_lbl = QLabel("✅ Ready")
+            status_lbl.setStyleSheet("color: #66bb6a; font-weight: bold;")
+            
+            dl_btn = QPushButton("⬇ Download")
+            dl_btn.setFixedWidth(100)
+            
+            pbar = QProgressBar()
+            pbar.setRange(0, 100)
+            pbar.setFixedHeight(16)
+            pbar.hide()
+
+            # Cek status unduhan menggunakan is_downloaded
+            if v["downloaded"]:
+                dl_btn.hide()
+                top_row.addWidget(status_lbl)
+            else:
+                status_lbl.hide()
+                top_row.addWidget(dl_btn)
+
+            row_lay.addLayout(top_row)
+            row_lay.addWidget(pbar)
+
+            # 3. Hubungkan tombol download ke fungsi eksekutor
+            dl_btn.clicked.connect(
+                lambda checked, f=family, var=v['name'], b=dl_btn, p=pbar, s=status_lbl: 
+                self._start_manual_download(f, var, b, p, s)
+            )
+
+            lay.addWidget(row_widget)
+            
+            # Garis pemisah antar varian
+            line = QFrame()
+            line.setFrameShape(QFrame.Shape.HLine)
+            line.setStyleSheet("background-color: #2a2a35;")
+            lay.addWidget(line)
+
         return group
 
-    def _on_model_changed(self, family: str, variant: str):
-        if variant is None:
-            return
-        self.settings.set(f"models.{family}", variant)
-        log.info("Model changed: %s → %s", family, variant)
+    def _start_manual_download(self, family: str, variant: str, btn: QPushButton, pbar: QProgressBar, status_lbl: QLabel):
+        """Memulai proses unduhan ketika tombol manual ditekan, menampilkan % di Progress Bar."""
+        btn.setEnabled(False)
+        pbar.setValue(0)
+        pbar.show()
 
-        if not self.model_mgr.is_downloaded(family, variant):
-            reply = QMessageBox.question(
-                self, "Download Model",
-                f"{variant} is not downloaded yet.\nDownload now?",
-                QMessageBox.StandardButton.Yes
-                | QMessageBox.StandardButton.No,
+        def _do_download(progress_callback=None, cancel_flag=None):
+            return self.model_mgr.download(
+                family, variant,
+                progress_callback=progress_callback,
+                cancel_flag=cancel_flag,
             )
-            if reply == QMessageBox.StandardButton.Yes:
-                dlg = ModelDownloadDialog(self)
-                dlg.show()
 
-                _fam = family
-                _var = variant
+        def _on_progress(pct, msg):
+            pbar.setValue(pct)
+            # Menangkap output pesan seperti "Downloading sam2... 50/150 MB"
+            if "MB" in msg:
+                mb_text = msg.split("…")[-1].strip()
+                pbar.setFormat(f"%p%  ({mb_text})")
+            else:
+                pbar.setFormat("%p%")
 
-                def _do_download(
-                    progress_callback=None, cancel_flag=None,
-                ):
-                    return self.model_mgr.download(
-                        _fam, _var,
-                        progress_callback=progress_callback,
-                        cancel_flag=cancel_flag,
-                    )
+        def _on_finished(result):
+            pbar.hide()
+            btn.hide()
+            status_lbl.show()
+            log.info("Manual download complete: %s", result)
 
-                worker = Worker(_do_download)
-                worker.signals.progress.connect(dlg.update)
-                worker.signals.finished.connect(lambda _: dlg.close())
-                worker.signals.error.connect(lambda e: (
-                    dlg.close(),
-                    QMessageBox.critical(self, "Error", str(e)),
-                ))
-                dlg.cancel_btn.clicked.connect(worker.cancel)
-                TaskQueue().submit(worker)
+        def _on_error(err):
+            pbar.hide()
+            btn.setEnabled(True)
+            QMessageBox.critical(self, "Download Error", str(err))
+
+        worker = Worker(_do_download)
+        worker.signals.progress.connect(_on_progress)
+        worker.signals.finished.connect(_on_finished)
+        worker.signals.error.connect(_on_error)
+        TaskQueue().submit(worker)
