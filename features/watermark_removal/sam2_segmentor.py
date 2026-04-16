@@ -36,10 +36,11 @@ class SAM2Segmentor:
         try:
             # --- PATCH HYDRA KHUSUS UNTUK PYINSTALLER ---
             if getattr(sys, 'frozen', False):
-                import sam2.build_sam
-                import hydra
-                from hydra.core.global_hydra import GlobalHydra
                 from contextlib import contextmanager
+
+                import hydra
+                import sam2.build_sam
+                from hydra.core.global_hydra import GlobalHydra
 
                 @contextmanager
                 def patched_initialize_config_module(*args, **kwargs):
