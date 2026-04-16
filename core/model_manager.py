@@ -51,12 +51,12 @@ class ModelManager:
         """Return local path for a model file."""
         ext = ".pt"
         bundled_path = os.path.join(_get_bundled_models_path(), family, f"{variant}{ext}")
-        
+
         # Return bundled path if exists
         if os.path.isfile(bundled_path):
             log.info("Using bundled model: %s", bundled_path)
             return bundled_path
-        
+
         return os.path.join(MODELS_ROOT, family, f"{variant}{ext}")
 
     def is_downloaded(self, family: str, variant: str) -> bool:
@@ -109,7 +109,7 @@ class ModelManager:
     ) -> str:
         """Download a model if not present. Returns local path."""
         dest = self.model_path(family, variant)
-        
+
         # Already have it (bundled or downloaded)
         if self.is_downloaded(family, variant):
             log.info("Model already available: %s", dest)
