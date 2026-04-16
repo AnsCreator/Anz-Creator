@@ -755,7 +755,18 @@ class SettingsPanel(QWidget):
         self._build_ui()
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
+        # 1. Layout dasar untuk memegang area gulir (Scroll Area)
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 2. Membuat QScrollArea
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        # 3. Membuat kontainer di dalam gulir yang memuat semua elemen
+        container = QWidget()
+        layout = QVBoxLayout(container)
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(16)
 
@@ -778,27 +789,34 @@ class SettingsPanel(QWidget):
 
         layout.addStretch()
 
+        # 4. Masukkan kontainer ke area gulir, dan area gulir ke layout layar
+        scroll.setWidget(container)
+        root_layout.addWidget(scroll)
+
     def _model_list_group(self, title: str, family: str) -> QGroupBox:
         """Membuat grup yang berisi daftar varian model, deskripsi, dan tombol unduh manual."""
         group = QGroupBox(title)
+        group.setStyleSheet("QGroupBox { font-weight: bold; padding-top: 18px; }")
         lay = QVBoxLayout(group)
-        lay.setSpacing(8)
+        lay.setSpacing(6)
 
         # Mengambil daftar varian dari ModelManager
         variants = self.model_mgr.list_variants(family)
         current = self.settings.get(f"models.{family}")
 
-        for v in variants:
+        for i, v in enumerate(variants):
             row_widget = QWidget()
             row_lay = QVBoxLayout(row_widget)
-            row_lay.setContentsMargins(0, 4, 0, 4)
+            row_lay.setContentsMargins(4, 6, 4, 6)
             row_lay.setSpacing(4)
 
             top_row = QHBoxLayout()
 
-            # 1. Radio Button (Nama, Deskripsi, Ukuran MB)
+            # 1. Radio Button (Nama Model & Ukuran MB)
             size_text = f"{v['size_mb']}MB" if v.get("size_mb") else f"{v.get('vram_gb', 0)}GB VRAM"
-            radio = QRadioButton(f"{v['name']}  —  {v['description']} ({size_text})")
+            radio = QRadioButton(f"{v['name']}  ({size_text})")
+            radio.setStyleSheet("font-size: 13px; color: #e0e0e0;")
+            radio.setMinimumHeight(24)
             radio.setChecked(v['name'] == current)
 
             # Simpan pengaturan jika radio button dipilih
@@ -810,17 +828,12 @@ class SettingsPanel(QWidget):
 
             # 2. Label Status dan Tombol Unduh Manual
             status_lbl = QLabel("✅ Ready")
-            status_lbl.setStyleSheet("color: #66bb6a; font-weight: bold;")
+            status_lbl.setStyleSheet("color: #66bb6a; font-weight: bold; font-size: 12px;")
 
             dl_btn = QPushButton("⬇ Download")
-            dl_btn.setFixedWidth(100)
+            dl_btn.setFixedSize(110, 28)
 
-            pbar = QProgressBar()
-            pbar.setRange(0, 100)
-            pbar.setFixedHeight(16)
-            pbar.hide()
-
-            # Cek status unduhan menggunakan is_downloaded
+            # Cek status unduhan
             if v["downloaded"]:
                 dl_btn.hide()
                 top_row.addWidget(status_lbl)
@@ -829,9 +842,22 @@ class SettingsPanel(QWidget):
                 top_row.addWidget(dl_btn)
 
             row_lay.addLayout(top_row)
+
+            # 3. Deskripsi Model
+            desc_lbl = QLabel(v['description'])
+            desc_lbl.setWordWrap(True)
+            desc_lbl.setStyleSheet("color: #888; font-size: 12px; margin-left: 22px;") 
+            row_lay.addWidget(desc_lbl)
+
+            # 4. Progress Bar
+            pbar = QProgressBar()
+            pbar.setRange(0, 100)
+            pbar.setFixedHeight(14)
+            pbar.setStyleSheet("QProgressBar { margin-left: 22px; margin-top: 4px; font-size: 10px; }")
+            pbar.hide()
             row_lay.addWidget(pbar)
 
-            # 3. Hubungkan tombol download ke fungsi eksekutor
+            # 5. Hubungkan tombol ke fungsi download
             dl_btn.clicked.connect(
                 lambda checked, f=family, var=v['name'], b=dl_btn, p=pbar, s=status_lbl:
                 self._start_manual_download(f, var, b, p, s)
@@ -839,11 +865,12 @@ class SettingsPanel(QWidget):
 
             lay.addWidget(row_widget)
 
-            # Garis pemisah antar varian
-            line = QFrame()
-            line.setFrameShape(QFrame.Shape.HLine)
-            line.setStyleSheet("background-color: #2a2a35;")
-            lay.addWidget(line)
+            # 6. Garis pemisah
+            if i < len(variants) - 1:
+                line = QFrame()
+                line.setFrameShape(QFrame.Shape.HLine)
+                line.setStyleSheet("background-color: #2a2a35;")
+                lay.addWidget(line)
 
         return group
 
@@ -862,7 +889,6 @@ class SettingsPanel(QWidget):
 
         def _on_progress(pct, msg):
             pbar.setValue(pct)
-            # Menangkap output pesan seperti "Downloading sam2... 50/150 MB"
             if "MB" in msg:
                 mb_text = msg.split("…")[-1].strip()
                 pbar.setFormat(f"%p%  ({mb_text})")
