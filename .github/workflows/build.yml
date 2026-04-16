@@ -78,10 +78,13 @@ jobs:
           pip install hydra-core omegaconf iopath fvcore yacs tqdm
           pip install pyinstaller
 
-      - name: Clone SAM2
+      - name: Clone SAM2 (compatible version)
         run: |
           git clone --depth 1 https://github.com/facebookresearch/segment-anything-2.git
-          echo "SAM2 cloned"
+          cd segment-anything-2
+          git checkout 51c7b77
+          cd ..
+          echo "SAM2 cloned (commit 51c7b77)"
 
       - name: Fix SAM2 symbolic links
         run: |
@@ -91,6 +94,17 @@ jobs:
               "model:`n  name: sam2_hiera`n  encoder:`n    embed_dim: 112`n    num_heads: 2`n  decoder:`n    num_mask_tokens: 4" | Out-File -FilePath $_.FullName -Encoding UTF8
             }
           }
+
+      - name: Download SAM2 model
+        run: |
+          New-Item -ItemType Directory -Force -Path "models\sam2"
+          curl -L -o "models\sam2\sam2_hiera_base_plus.pt" "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_base_plus.pt"
+          curl -L -o "models\sam2\sam2_hiera_large.pt" "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_large.pt"
+          curl -L -o "models\sam2\sam2_hiera_small.pt" "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_small.pt"
+          curl -L -o "models\sam2\sam2_hiera_tiny.pt" "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_tiny.pt"
+          curl -L -o "models\yolov8\yolov8m.pt" "https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8m.pt"
+          curl -L -o "models\yolov8\yolov8n.pt" "https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8n.pt"
+          echo "Models downloaded"
 
       - name: Install FFmpeg
         run: choco install ffmpeg -y --no-progress
@@ -107,6 +121,7 @@ jobs:
             --onefile `
             --add-data "config.yaml;." `
             --add-data "version.txt;." `
+            --add-data "models;models" `
             --add-data "segment-anything-2\sam2;sam2" `
             --hidden-import PyQt6 `
             --hidden-import PyQt6.QtCore `
@@ -118,10 +133,12 @@ jobs:
             --hidden-import sam2.sam2_image_predictor `
             --hidden-import sam2.sam2_video_predictor `
             --hidden-import sam2.modeling `
+            --hidden-import sam2.modeling.sam2_base `
+            --hidden-import sam2.modeling.transformer `
+            --hidden-import sam2.modeling.backbones `
             --hidden-import sam2.utils `
             --hidden-import hydra `
             --hidden-import hydra._internal `
-            --hidden-import hydra.core `
             --hidden-import omegaconf `
             --hidden-import iopath `
             --hidden-import fvcore `
@@ -156,6 +173,8 @@ jobs:
           VIProductVersion "$version.0"
           VIAddVersionKey "ProductName" "Anz-Creator"
           VIAddVersionKey "FileVersion" "$version"
+          VIAddVersionKey "CompanyName" "AnzCreator"
+          VIAddVersionKey "FileDescription" "AI-powered Video Processing Toolkit"
           !insertmacro MUI_PAGE_WELCOME
           !insertmacro MUI_PAGE_DIRECTORY
           !insertmacro MUI_PAGE_INSTFILES
@@ -165,7 +184,11 @@ jobs:
             SetOutPath `$INSTDIR`
             WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayName" "Anz-Creator"
             WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "UninstallString" '"`$INSTDIR\uninstall.exe"'
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayIcon" "`$INSTDIR\Anz-Creator.exe"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "DisplayVersion" "$version"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "Publisher" "AnzCreator"
             WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "NoModify" 1
+            WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Anz-Creator" "NoRepair" 1
             File /r "installer_build\*"
             WriteUninstaller "`$INSTDIR\uninstall.exe"
             CreateDirectory "`$SMPROGRAMS\Anz-Creator"
@@ -184,6 +207,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path release
           & "C:\Program Files (x86)\NSIS\makensis.exe" setup.nsi
+          Get-ChildItem -Path release
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -209,7 +233,7 @@ jobs:
           tag_name: ${{ needs.version.outputs.new_tag }}
           name: "Anz-Creator ${{ needs.version.outputs.new_tag }}"
           body: |
-            ## Anz-Creator ${{ needs.version.outputs.new_tag }}
+            ## 🚀 Anz-Creator ${{ needs.version.outputs.new_tag }}
             
             ### Changes
             ${{ needs.version.outputs.changelog }}
@@ -219,14 +243,18 @@ jobs:
             - ProPainter video inpainting
             - yt-dlp support 1000+ platforms
             - PyQt6 Dark UI
-            - SAM2 Pre-installed
+            - **SAM2 & YOLO models pre-bundled** - No downloads needed!
             
             ### Requirements
             - Windows 10/11 64-bit
             - 8GB RAM minimum
+            - NVIDIA GPU 4-12GB VRAM (recommended)
             
             ### Installation
             1. Download Anz-Creator-Setup.exe
             2. Run as Administrator
             3. Follow setup wizard
+            
+            ### First Run
+            All AI models are pre-installed. No additional downloads required!
           files: ./release/*
