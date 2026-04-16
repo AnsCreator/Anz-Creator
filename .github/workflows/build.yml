@@ -92,9 +92,6 @@ jobs:
             }
           }
 
-      - name: Install FFmpeg
-        run: choco install ffmpeg -y --no-progress
-
       - name: Write version file
         run: echo '${{ needs.version.outputs.new_tag }}' > version.txt
 
@@ -229,7 +226,7 @@ jobs:
             - yt-dlp support 1000+ platforms
             - PyQt6 Dark UI
             
-            *(Note: AI Models like SAM2 and YOLOv8 are no longer pre-bundled to keep the installer lightweight. You can download them directly inside the app via the Settings menu).*
+            *(Note: System Dependencies like FFmpeg and AI Models like SAM2/YOLOv8 are no longer pre-bundled to keep the installer lightweight. You can download them directly inside the app via the Settings menu).*
             
             ### Requirements
             - Windows 10/11 64-bit
