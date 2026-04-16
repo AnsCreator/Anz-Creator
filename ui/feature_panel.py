@@ -347,6 +347,7 @@ class WatermarkRemovalPanel(QWidget):
             # 2a: Try FFmpeg
             try:
                 import shutil
+
                 from core.video_io import _app_bin_dir
 
                 ffmpeg_bin = shutil.which("ffmpeg")
