@@ -823,28 +823,60 @@ class WatermarkRemovalPanel(QWidget):
         self._sam2_install_in_progress = True
 
         dlg = ModelDownloadDialog(self, title="Installing SAM2 Package")
-        dlg.update(0, "Running pip install (this can take several minutes)…")
+        dlg.update(
+            0,
+            "Downloading and installing SAM2 from PyPI "
+            "(typically 1-3 minutes)…",
+        )
         dlg.show()
 
         def _install(progress_callback=None, cancel_flag=None):
+            # Stage-based heuristic progress. SAM2 install has 3 phases:
+            # (1) Clone repo, (2) Collect deps, (3) Build/install. We map pip
+            # output keywords to a coarse percentage so the user sees movement.
+            stage_keywords = [
+                ("Cloning into", 5, "Cloning SAM2 repository…"),
+                ("Collecting sam", 15, "Preparing SAM2…"),
+                ("Collecting ", 25, "Collecting dependencies…"),
+                ("Downloading ", 35, "Downloading dependencies…"),
+                ("Installing build dependencies", 45, "Installing build deps…"),
+                ("Getting requirements", 50, "Resolving requirements…"),
+                ("Preparing metadata", 55, "Preparing metadata…"),
+                ("Building wheel", 65, "Building SAM2 (may take several minutes)…"),
+                ("Building wheels", 65, "Building SAM2 (may take several minutes)…"),
+                ("Successfully built", 80, "Build complete. Installing…"),
+                ("Installing collected packages", 85, "Installing SAM2…"),
+                ("Successfully installed", 95, "Install complete."),
+            ]
+
             if progress_callback:
-                progress_callback(10, "Installing SAM2 from GitHub…")
+                progress_callback(2, "Starting pip install…")
+
+            # Prefer PyPI wheel: fast, no git clone, no C++ compile needed.
+            # (facebookresearch publishes the `sam2` package to PyPI.)
+            # Set SAM2_BUILD_CUDA=0 so the install does not try to build the
+            # optional CUDA post-processing extension — that compile step
+            # needs the CUDA Toolkit + MSVC Build Tools and is what made
+            # earlier attempts appear to hang for 10+ minutes. The post-
+            # processing step is optional and disabling it does not affect
+            # results for our watermark-removal use case.
+            env = os.environ.copy()
+            env["SAM2_BUILD_CUDA"] = "0"
+            env["SAM2_BUILD_ALLOW_ERRORS"] = "1"
+
             cmd = [
                 sys.executable, "-m", "pip", "install",
                 "--no-build-isolation",
-                "git+https://github.com/facebookresearch/sam2.git",
+                "--progress-bar", "off",
+                "--verbose",  # Verbose so we get useful stage hints in stdout
+                "sam2",  # from PyPI
             ]
 
-            # Hide console window on Windows via STARTUPINFO
-            # (CREATE_NO_WINDOW alone is not enough when child processes
-            # like git.exe or cl.exe spawn their own consoles.)
+            # Hide console window on Windows via STARTUPINFO.
             creationflags = 0
             startupinfo = None
             if os.name == "nt":
-                creationflags = (
-                    getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                    | getattr(subprocess, "DETACHED_PROCESS", 0)
-                )
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
                 if hasattr(subprocess, "STARTUPINFO"):
                     startupinfo = subprocess.STARTUPINFO()
                     startupinfo.dwFlags |= getattr(
@@ -852,21 +884,75 @@ class WatermarkRemovalPanel(QWidget):
                     )
                     startupinfo.wShowWindow = 0  # SW_HIDE
 
-            # Capture output to show any errors
-            result = subprocess.run(
+            # Stream stdout line-by-line so the user sees progress in real time,
+            # and so we can cancel mid-flight. pip writes to stderr too but
+            # merging with stdout keeps things simple.
+            proc = subprocess.Popen(
                 cmd,
-                capture_output=True, text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,  # line-buffered
                 creationflags=creationflags,
                 startupinfo=startupinfo,
+                env=env,
+                # CREATE_NEW_PROCESS_GROUP lets us terminate pip cleanly.
+                **(
+                    {"start_new_session": True}
+                    if os.name != "nt"
+                    else {}
+                ),
             )
-            if result.returncode != 0:
+
+            current_pct = 2
+            collected_output: list[str] = []
+
+            try:
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    if cancel_flag and cancel_flag():
+                        log.info("SAM2 install cancelled by user.")
+                        try:
+                            proc.terminate()
+                        except Exception:
+                            pass
+                        try:
+                            proc.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                        raise RuntimeError("Cancelled")
+
+                    stripped = line.rstrip()
+                    if stripped:
+                        collected_output.append(stripped)
+                        # Keep the tail bounded so we don't eat memory on long
+                        # verbose runs.
+                        if len(collected_output) > 400:
+                            del collected_output[:100]
+
+                    # Update progress if the line matches a known stage
+                    for key, pct, label in stage_keywords:
+                        if key in stripped and pct > current_pct:
+                            current_pct = pct
+                            if progress_callback:
+                                progress_callback(pct, label)
+                            break
+            finally:
+                try:
+                    proc.stdout.close()
+                except Exception:
+                    pass
+
+            returncode = proc.wait()
+
+            if returncode != 0:
+                tail = "\n".join(collected_output[-30:])
                 raise RuntimeError(
-                    f"pip install failed (exit {result.returncode}):\n"
-                    f"{(result.stderr or result.stdout or '')[-800:]}"
+                    f"pip install failed (exit {returncode}):\n{tail}"
                 )
 
             if progress_callback:
-                progress_callback(90, "Verifying install…")
+                progress_callback(96, "Verifying install…")
 
             # Try to make the newly installed package visible to the running
             # interpreter without a restart.
@@ -874,7 +960,6 @@ class WatermarkRemovalPanel(QWidget):
                 import importlib
                 import site
 
-                # Refresh site-packages paths in case pip installed to a new dir
                 try:
                     importlib.reload(site)
                 except Exception:
@@ -892,7 +977,9 @@ class WatermarkRemovalPanel(QWidget):
                 import sam2.build_sam  # noqa: F401
                 available_in_session = True
             except ImportError as exc:
-                log.warning("SAM2 installed but not importable in this session: %s", exc)
+                log.warning(
+                    "SAM2 installed but not importable in this session: %s", exc
+                )
                 available_in_session = False
 
             if progress_callback:
