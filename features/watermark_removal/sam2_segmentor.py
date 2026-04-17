@@ -45,8 +45,9 @@ class SAM2Segmentor:
             except ImportError as exc:
                 raise RuntimeError(
                     "SAM2 package not installed. "
-                    "Install with: pip install "
-                    "git+https://github.com/facebookresearch/segment-anything-2.git"
+                    "Run 'python install_sam2.py' from the Anz-Creator folder, "
+                    "or install manually with: "
+                    "pip install git+https://github.com/facebookresearch/sam2.git"
                 ) from exc
 
         model_name = os.path.basename(self.model_path).lower()
@@ -122,8 +123,9 @@ class SAM2Segmentor:
         except ImportError as exc:
             raise RuntimeError(
                 "SAM2 package not installed. "
-                "Install with: pip install "
-                "git+https://github.com/facebookresearch/segment-anything-2.git"
+                "Run 'python install_sam2.py' from the Anz-Creator folder, "
+                "or install manually with: "
+                "pip install git+https://github.com/facebookresearch/sam2.git"
             ) from exc
 
         config_file = self._find_sam2_config()
