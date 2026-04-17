@@ -7,7 +7,7 @@ import os
 import sys
 import threading
 from pathlib import Path
-from typing import Callable, Optional, List
+from typing import Callable, List, Optional
 
 import requests
 import yaml
