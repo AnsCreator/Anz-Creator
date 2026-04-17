@@ -618,9 +618,8 @@ class WatermarkRemovalPanel(QWidget):
 
         # For manual mode, also verify SAM2 Python package is installed
         if mode == "manual":
-            try:
-                import sam2.build_sam  # noqa: F401
-            except ImportError:
+            status, details = self._check_sam2_package()
+            if status == "missing":
                 reply = QMessageBox.question(
                     self, "SAM2 Package Required",
                     "SAM2 Python package is not installed.\n\n"
@@ -632,6 +631,23 @@ class WatermarkRemovalPanel(QWidget):
                 )
                 if reply == QMessageBox.StandardButton.Yes:
                     self._install_sam2_package()
+                return
+            elif status == "restart_required":
+                QMessageBox.warning(
+                    self, "Restart Required",
+                    "SAM2 was installed in a previous step but is not "
+                    "visible to the running application.\n\n"
+                    "Please CLOSE and REOPEN Anz-Creator to use Manual mode.",
+                )
+                return
+            elif status == "broken":
+                self._show_error(
+                    "SAM2 Package Error",
+                    f"SAM2 is installed but failed to import:\n\n{details}\n\n"
+                    "This usually means a missing dependency "
+                    "(PyTorch or CUDA toolkit). "
+                    "Try reinstalling PyTorch that matches your CUDA version.",
+                )
                 return
 
         output_dir = "output"
@@ -730,10 +746,81 @@ class WatermarkRemovalPanel(QWidget):
         dlg.cancel_btn.clicked.connect(worker.cancel)
         self.task_queue.submit(worker)
 
+    def _check_sam2_package(self):
+        """
+        Diagnose SAM2 package state.
+
+        Returns a tuple (status, details):
+            ("ok", "")              — usable
+            ("missing", "")         — package not installed at all
+            ("broken", "<error>")   — installed but fails to import due to
+                                      a broken dependency (e.g. missing torch)
+            ("restart_required", "") — dist-info present in site-packages but
+                                       not importable yet (install happened
+                                       in this session without restart)
+        """
+        import importlib
+        import sys
+
+        # First, clear stale failed-import cache (e.g. after running
+        # _install_sam2_package during this session).
+        try:
+            importlib.invalidate_caches()
+            for mod_name in list(sys.modules.keys()):
+                if (
+                    (mod_name == "sam2" or mod_name.startswith("sam2."))
+                    and sys.modules[mod_name] is None
+                ):
+                    # Only drop negative-cache entries; keep successful imports
+                    sys.modules.pop(mod_name, None)
+        except Exception:
+            pass
+
+        try:
+            import sam2.build_sam  # noqa: F401
+            return ("ok", "")
+        except ImportError as exc:
+            msg = str(exc)
+        except Exception as exc:
+            # Some other error (e.g. torch ImportError during sam2 __init__)
+            return ("broken", str(exc))
+
+        # Not importable. Is it installed at all? Check dist-info.
+        try:
+            import importlib.metadata as md
+        except ImportError:
+            # Python <3.8 fallback (should not happen on supported versions)
+            try:
+                import importlib_metadata as md  # type: ignore[import-not-found]
+            except ImportError:
+                return ("missing", msg)
+
+        try:
+            md.distribution("SAM-2")
+            return ("restart_required", msg)
+        except md.PackageNotFoundError:
+            pass
+
+        # Try common alternate distribution names
+        for name in ("sam2", "segment-anything-2"):
+            try:
+                md.distribution(name)
+                return ("restart_required", msg)
+            except md.PackageNotFoundError:
+                continue
+
+        return ("missing", msg)
+
     def _install_sam2_package(self):
         """Install SAM2 Python package from GitHub via pip subprocess."""
         import subprocess
         import sys
+
+        # Prevent double-click / re-entry
+        if getattr(self, "_sam2_install_in_progress", False):
+            log.info("SAM2 install already in progress — ignoring duplicate request.")
+            return
+        self._sam2_install_in_progress = True
 
         dlg = ModelDownloadDialog(self, title="Installing SAM2 Package")
         dlg.update(0, "Running pip install (this can take several minutes)…")
@@ -747,32 +834,92 @@ class WatermarkRemovalPanel(QWidget):
                 "--no-build-isolation",
                 "git+https://github.com/facebookresearch/sam2.git",
             ]
-            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+
+            # Hide console window on Windows via STARTUPINFO
+            # (CREATE_NO_WINDOW alone is not enough when child processes
+            # like git.exe or cl.exe spawn their own consoles.)
+            creationflags = 0
+            startupinfo = None
+            if os.name == "nt":
+                creationflags = (
+                    getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                    | getattr(subprocess, "DETACHED_PROCESS", 0)
+                )
+                if hasattr(subprocess, "STARTUPINFO"):
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= getattr(
+                        subprocess, "STARTF_USESHOWWINDOW", 1
+                    )
+                    startupinfo.wShowWindow = 0  # SW_HIDE
+
             # Capture output to show any errors
             result = subprocess.run(
                 cmd,
                 capture_output=True, text=True,
                 creationflags=creationflags,
+                startupinfo=startupinfo,
             )
-            if progress_callback:
-                progress_callback(100, "SAM2 installed.")
             if result.returncode != 0:
                 raise RuntimeError(
                     f"pip install failed (exit {result.returncode}):\n"
-                    f"{result.stderr[-500:]}"
+                    f"{(result.stderr or result.stdout or '')[-800:]}"
                 )
-            return True
 
-        def _on_finished(_result):
+            if progress_callback:
+                progress_callback(90, "Verifying install…")
+
+            # Try to make the newly installed package visible to the running
+            # interpreter without a restart.
+            try:
+                import importlib
+                import site
+
+                # Refresh site-packages paths in case pip installed to a new dir
+                try:
+                    importlib.reload(site)
+                except Exception:
+                    pass
+                importlib.invalidate_caches()
+                # Drop any cached failed imports from previous attempts
+                for mod_name in list(sys.modules.keys()):
+                    if mod_name == "sam2" or mod_name.startswith("sam2."):
+                        sys.modules.pop(mod_name, None)
+            except Exception as exc:
+                log.warning("Cache invalidation warning: %s", exc)
+
+            # Verify it actually imports
+            try:
+                import sam2.build_sam  # noqa: F401
+                available_in_session = True
+            except ImportError as exc:
+                log.warning("SAM2 installed but not importable in this session: %s", exc)
+                available_in_session = False
+
+            if progress_callback:
+                progress_callback(100, "SAM2 installed.")
+            return available_in_session
+
+        def _on_finished(result):
             dlg.close()
-            QMessageBox.information(
-                self, "SAM2 Installed",
-                "SAM2 Python package installed successfully.\n"
-                "You can now use Manual mode.",
-            )
+            self._sam2_install_in_progress = False
+            if result:
+                QMessageBox.information(
+                    self, "SAM2 Installed",
+                    "SAM2 Python package installed successfully.\n"
+                    "You can now use Manual mode.",
+                )
+            else:
+                # Install succeeded but import still fails — restart required.
+                QMessageBox.warning(
+                    self, "Restart Required",
+                    "SAM2 package installed successfully, but the running "
+                    "application cannot see it yet.\n\n"
+                    "Please CLOSE and REOPEN Anz-Creator to use Manual mode.",
+                )
 
         def _on_error(e):
             dlg.close()
+            self._sam2_install_in_progress = False
             self._show_error(
                 "SAM2 Install Failed",
                 f"{e}\n\nPlease install manually from a terminal:\n"
