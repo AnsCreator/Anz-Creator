@@ -68,7 +68,10 @@ class Worker(QRunnable):
         except Exception as exc:
             tb = traceback.format_exc()
             log.error("Worker error: %s\n%s", exc, tb)
-            self.signals.error.emit(str(exc))
+            try:
+                self.signals.error.emit(str(exc))
+            except Exception:
+                pass
 
 
 # ── Task Queue Manager ───────────────────────────────────
@@ -99,9 +102,15 @@ class TaskQueue:
         with self._active_lock:
             self._active.append(worker)
 
-        worker.signals.finished.connect(lambda _: self._cleanup(worker))
-        worker.signals.error.connect(lambda _: self._cleanup(worker))
-        worker.signals.cancelled.connect(lambda: self._cleanup(worker))
+        # Use a small closure to remove on completion. We keep a reference
+        # on the worker itself so it isn't collected before the slot fires.
+        def _on_done(*_args):
+            self._cleanup(worker)
+
+        worker._cleanup_cb = _on_done  # keep alive reference
+        worker.signals.finished.connect(_on_done)
+        worker.signals.error.connect(_on_done)
+        worker.signals.cancelled.connect(_on_done)
         self._pool.start(worker)
 
         fn_name = getattr(worker.fn, "__name__", repr(worker.fn))
@@ -112,7 +121,10 @@ class TaskQueue:
         with self._active_lock:
             workers = list(self._active)
         for w in workers:
-            w.cancel()
+            try:
+                w.cancel()
+            except Exception:
+                pass
         log.info("All tasks cancelled.")
 
     def _cleanup(self, worker: Worker):

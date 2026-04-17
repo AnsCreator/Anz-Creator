@@ -1,7 +1,7 @@
 """
 yt-dlp wrapper for URL-based video download.
 Supports YouTube, TikTok, Instagram, and 1000+ platforms.
-Auto-installs yt-dlp if not found.
+Auto-downloads yt-dlp standalone binary if not found.
 """
 
 from __future__ import annotations
@@ -11,6 +11,8 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import threading
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 from urllib.parse import urlparse
@@ -32,6 +34,11 @@ class VideoMeta:
     formats: list[dict] = field(default_factory=list)
 
 
+# Process-wide lock to prevent two threads in the same process from
+# trying to download yt-dlp concurrently.
+_YTDLP_DOWNLOAD_LOCK = threading.Lock()
+
+
 def _normalize_url(url: str) -> str:
     """Ensure URL has https:// prefix and validate scheme."""
     url = url.strip().strip("\"'")
@@ -48,7 +55,7 @@ def _normalize_url(url: str) -> str:
 def _subprocess_flags() -> int:
     """Return CREATE_NO_WINDOW on Windows to hide console popups."""
     if os.name == "nt":
-        return subprocess.CREATE_NO_WINDOW
+        return getattr(subprocess, "CREATE_NO_WINDOW", 0)
     return 0
 
 
@@ -62,47 +69,27 @@ def _startupinfo():
     return None
 
 
-def _acquire_file_lock(fd):
-    """Acquire an exclusive lock on the open file descriptor."""
-    if os.name == "nt":
-        import msvcrt
-        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
-    else:
-        import fcntl
-        fcntl.flock(fd, fcntl.LOCK_EX)
-
-
-def _release_file_lock(fd):
-    """Release the lock on the file descriptor."""
-    if os.name == "nt":
-        import msvcrt
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-    else:
-        import fcntl
-        fcntl.flock(fd, fcntl.LOCK_UN)
-
-
 def _find_ytdlp() -> str:
     """
     Find yt-dlp executable. Search order:
     1. Bundled in app data folder (previously auto-downloaded)
     2. System PATH
     3. Python Scripts folder (pip install location on Windows)
-    4. Auto-download standalone .exe from GitHub releases (with locking)
+    4. Auto-download standalone binary from GitHub releases
     """
-    # App-local location (auto-downloaded binary lives here)
     app_bin_dir = os.path.join(
         os.environ.get("APPDATA", os.path.expanduser("~")),
         "Anz-Creator", "bin",
     )
-    app_ytdlp = os.path.join(
-        app_bin_dir, "yt-dlp.exe" if os.name == "nt" else "yt-dlp",
-    )
-    if os.path.isfile(app_ytdlp):
+    exe_name = "yt-dlp.exe" if os.name == "nt" else "yt-dlp"
+    app_ytdlp = os.path.join(app_bin_dir, exe_name)
+
+    # 0. Check app-local location
+    if os.path.isfile(app_ytdlp) and os.path.getsize(app_ytdlp) > 0:
         log.info("yt-dlp found in app folder: %s", app_ytdlp)
         return app_ytdlp
 
-    # 1. Check PATH
+    # 1. Check system PATH
     found = shutil.which("yt-dlp")
     if found:
         log.info("yt-dlp found in PATH: %s", found)
@@ -116,7 +103,7 @@ def _find_ytdlp() -> str:
             log.info("yt-dlp found in Scripts: %s", p)
             return p
 
-    # Check user-level Scripts (pip install --user)
+    # Check user-level Scripts (pip install --user) on Windows
     if os.name == "nt":
         user_base = os.environ.get("APPDATA", "")
         user_scripts_candidates = [
@@ -132,100 +119,75 @@ def _find_ytdlp() -> str:
                 log.info("yt-dlp found: %s", p)
                 return p
 
-    # 3. Auto-download standalone exe from GitHub releases (with locking)
-    log.warning("yt-dlp not found — downloading standalone exe…")
-    os.makedirs(app_bin_dir, exist_ok=True)
-    tmp_path = app_ytdlp + ".part"
-    lock_file = app_ytdlp + ".lock"
-
-    # Use a lock file to prevent concurrent downloads
-    lock_fd = os.open(lock_file, os.O_CREAT | os.O_RDWR)
-    try:
-        _acquire_file_lock(lock_fd)
-
-        # Double-check after acquiring lock
-        if os.path.isfile(app_ytdlp):
+    # 3. Auto-download standalone binary from GitHub
+    with _YTDLP_DOWNLOAD_LOCK:
+        # Re-check after acquiring lock
+        if os.path.isfile(app_ytdlp) and os.path.getsize(app_ytdlp) > 0:
             return app_ytdlp
+
+        log.warning("yt-dlp not found — downloading standalone binary…")
+        os.makedirs(app_bin_dir, exist_ok=True)
 
         if os.name == "nt":
             url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+        elif sys.platform == "darwin":
+            url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos"
         else:
             url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"
 
-        # --- Download with resume support ---
-        headers = {}
-        existing_size = 0
-        if os.path.exists(tmp_path):
-            existing_size = os.path.getsize(tmp_path)
-            if existing_size > 0:
-                headers["Range"] = f"bytes={existing_size}-"
-                log.info("Resuming yt-dlp download from byte %d", existing_size)
+        # Download to a unique temp file, then atomic-rename into place
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            prefix="yt-dlp-", suffix=".part", dir=app_bin_dir,
+        )
+        os.close(tmp_fd)
 
-        log.info("Downloading yt-dlp from %s …", url)
-        resp = requests.get(url, stream=True, timeout=60, allow_redirects=True, headers=headers)
-
-        if resp.status_code == 416:
-            # Range not satisfiable - file is complete but maybe corrupted
-            log.warning("Resume failed, starting fresh")
-            os.remove(tmp_path)
-            existing_size = 0
-            headers.pop("Range", None)
-            resp = requests.get(url, stream=True, timeout=60, allow_redirects=True)
-
-        resp.raise_for_status()
-
-        # Open file with locking
-        with open(tmp_path, "ab" if existing_size > 0 else "wb") as f:
-            # Lock the file descriptor
-            _acquire_file_lock(f.fileno())
-            try:
-                for chunk in resp.iter_content(chunk_size=256 * 1024):
-                    f.write(chunk)
-            finally:
-                _release_file_lock(f.fileno())
-
-        # Verify file is not empty
-        if os.path.getsize(tmp_path) == 0:
-            os.remove(tmp_path)
-            raise RuntimeError("Downloaded yt-dlp file is empty")
-
-        os.rename(tmp_path, app_ytdlp)
-
-        # Make executable on Linux/macOS
-        if os.name != "nt":
-            os.chmod(app_ytdlp, 0o755)
-
-        log.info("yt-dlp downloaded to: %s", app_ytdlp)
-        return app_ytdlp
-
-    except Exception as exc:
-        log.error("Failed to download yt-dlp: %s", exc)
-        # Clean up partial file
-        if os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
-        raise
-    finally:
-        _release_file_lock(lock_fd)
-        os.close(lock_fd)
         try:
-            os.remove(lock_file)
-        except OSError:
-            pass
+            log.info("Downloading yt-dlp from %s …", url)
+            resp = requests.get(
+                url, stream=True, timeout=60, allow_redirects=True,
+                headers={"User-Agent": "Anz-Creator"},
+            )
+            resp.raise_for_status()
+
+            with open(tmp_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=256 * 1024):
+                    if chunk:
+                        f.write(chunk)
+
+            if os.path.getsize(tmp_path) == 0:
+                raise RuntimeError("Downloaded yt-dlp file is empty")
+
+            # Atomic replace on both Windows and POSIX
+            os.replace(tmp_path, app_ytdlp)
+
+            if os.name != "nt":
+                os.chmod(app_ytdlp, 0o755)
+
+            log.info("yt-dlp downloaded to: %s", app_ytdlp)
+            return app_ytdlp
+
+        except Exception as exc:
+            log.error("Failed to download yt-dlp: %s", exc)
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+            raise
 
 
 class Downloader:
     """Thin wrapper around yt-dlp CLI."""
 
-    _ytdlp_path: str = None
+    _ytdlp_path: Optional[str] = None
+    _ytdlp_lock = threading.Lock()
 
     @classmethod
     def _get_ytdlp(cls) -> str:
-        if cls._ytdlp_path is None:
-            cls._ytdlp_path = _find_ytdlp()
-        return cls._ytdlp_path
+        with cls._ytdlp_lock:
+            if cls._ytdlp_path is None:
+                cls._ytdlp_path = _find_ytdlp()
+            return cls._ytdlp_path
 
     # ── metadata ─────────────────────────────────────────
     @staticmethod
@@ -256,6 +218,10 @@ class Downloader:
             )
         except subprocess.TimeoutExpired:
             raise RuntimeError("yt-dlp timed out fetching metadata. Try again.")
+        except FileNotFoundError:
+            raise RuntimeError(
+                "yt-dlp not found. Install with: pip install yt-dlp"
+            )
 
         if result.returncode != 0:
             stderr = (result.stderr or "").strip()
@@ -349,44 +315,50 @@ class Downloader:
         )
 
         output_path = ""
-        for line in proc.stdout:
-            if cancel_flag and cancel_flag():
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                if cancel_flag and cancel_flag():
+                    proc.kill()
+                    proc.wait(timeout=5)
+                    log.info("Download cancelled.")
+                    return ""
+
+                line = line.strip()
+                # Parse yt-dlp progress lines: "[download]  45.2% of ~100MiB …"
+                if "[download]" in line and "%" in line:
+                    try:
+                        pct_str = line.split("%")[0].split()[-1]
+                        pct = min(int(float(pct_str)), 100)
+                        if progress_callback:
+                            progress_callback(pct, f"Downloading… {pct}%")
+                    except (ValueError, IndexError):
+                        pass
+                if "Destination:" in line:
+                    output_path = line.split("Destination:")[-1].strip()
+                if "has already been downloaded" in line:
+                    try:
+                        output_path = (
+                            line.split("[download]")[-1]
+                            .split("has already")[0]
+                            .strip()
+                        )
+                    except Exception:
+                        pass
+                # yt-dlp may also report merge destination
+                if "[Merger] Merging formats into" in line:
+                    try:
+                        merge_path = line.split("into")[-1].strip().strip('"')
+                        if merge_path:
+                            output_path = merge_path
+                    except Exception:
+                        pass
+        finally:
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
-                log.info("Download cancelled.")
-                return ""
-
-            line = line.strip()
-            # Parse yt-dlp progress lines: "[download]  45.2% of ~100MiB …"
-            if "[download]" in line and "%" in line:
-                try:
-                    pct_str = line.split("%")[0].split()[-1]
-                    pct = min(int(float(pct_str)), 100)
-                    if progress_callback:
-                        progress_callback(pct, f"Downloading… {pct}%")
-                except (ValueError, IndexError):
-                    pass
-            if "Destination:" in line:
-                output_path = line.split("Destination:")[-1].strip()
-            if "has already been downloaded" in line:
-                try:
-                    output_path = (
-                        line.split("[download]")[-1]
-                        .split("has already")[0]
-                        .strip()
-                    )
-                except Exception:
-                    pass
-            # yt-dlp may also report merge destination
-            if "[Merger] Merging formats into" in line:
-                try:
-                    merge_path = line.split("into")[-1].strip().strip('"')
-                    if merge_path:
-                        output_path = merge_path
-                except Exception:
-                    pass
-
-        proc.wait()
 
         # Fallback: find most recent .mp4 in output dir
         if not output_path or not os.path.isfile(output_path):
