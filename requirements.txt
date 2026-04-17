@@ -10,4 +10,8 @@ numpy>=1.24.0
 Pillow>=10.0.0
 scenedetect[opencv]>=0.6.2
 requests>=2.31.0
-git+https://github.com/facebookresearch/segment-anything-2.git@a0d22f3d9b2f7e3b9b2f7e3b9b2f7e3b9b2f7e3b
+hydra-core>=1.3.0
+omegaconf>=2.3.0
+iopath>=0.1.10
+# SAM2 — install manually after the other deps:
+#   pip install git+https://github.com/facebookresearch/segment-anything-2.git

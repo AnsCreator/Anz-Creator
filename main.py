@@ -6,23 +6,28 @@ Entry point: initializes Qt app, applies dark material theme, launches main wind
 import os
 import sys
 
-# Dukungan absolut untuk PyInstaller (saat jadi .exe)
-if getattr(sys, 'frozen', False):
-    _PROJECT_ROOT = sys._MEIPASS
+# Absolute path support for PyInstaller (when running as .exe)
+if getattr(sys, "frozen", False):
+    _PROJECT_ROOT = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
 else:
     _PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
-sys.path.insert(0, _PROJECT_ROOT)
-os.chdir(_PROJECT_ROOT)
+if _PROJECT_ROOT and _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
-from PyQt6.QtCore import QThread
-from PyQt6.QtWidgets import QApplication
+try:
+    os.chdir(_PROJECT_ROOT)
+except OSError:
+    pass
 
-from utils.logger import log
+from PyQt6.QtCore import QThread  # noqa: E402
+from PyQt6.QtWidgets import QApplication  # noqa: E402
 
-# Global reference to keep crash file open for faulthandler
+from utils.logger import log  # noqa: E402
+
+# Global refs to keep crash file open for faulthandler
 _crash_file = None
-_handling_exception = False  # Lock untuk mencegah infinite error loop
+_handling_exception = False  # Lock to prevent infinite error loop
 
 
 def main() -> int:
@@ -58,7 +63,9 @@ def main() -> int:
         palette.setColor(QPalette.ColorRole.Button, QColor(33, 38, 45))
         palette.setColor(QPalette.ColorRole.ButtonText, QColor(201, 209, 217))
         palette.setColor(QPalette.ColorRole.Highlight, QColor(0, 150, 136))
-        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
+        palette.setColor(
+            QPalette.ColorRole.HighlightedText, QColor(255, 255, 255),
+        )
         app.setPalette(palette)
 
     app.setStyleSheet(app.styleSheet() + """
@@ -89,18 +96,26 @@ def main() -> int:
     exit_code = app.exec()
 
     # Cleanup
-    if hasattr(window, 'debug_panel') and hasattr(window.debug_panel, 'remove_handler'):
-        window.debug_panel.remove_handler()
-    window.close()
-    del window
-    app.processEvents()
+    try:
+        if hasattr(window, "debug_panel") and hasattr(
+            window.debug_panel, "remove_handler",
+        ):
+            window.debug_panel.remove_handler()
+    except Exception:
+        pass
 
+    try:
+        window.close()
+    except Exception:
+        pass
+
+    app.processEvents()
     return exit_code
 
 
 def _global_exception_handler(exc_type, exc_value, exc_tb):
     global _handling_exception
-    # Cegah infinite loop jika QMessageBox memicu error baru
+    # Prevent infinite loop if QMessageBox itself raises
     if _handling_exception:
         return
     _handling_exception = True
@@ -111,13 +126,18 @@ def _global_exception_handler(exc_type, exc_value, exc_tb):
             return
 
         import traceback
-        tb_str = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        tb_str = "".join(
+            traceback.format_exception(exc_type, exc_value, exc_tb),
+        )
         log.critical("Unhandled exception:\n%s", tb_str)
 
         from PyQt6.QtWidgets import QApplication, QMessageBox
         app_inst = QApplication.instance()
 
-        if app_inst is not None and QThread.currentThread() == app_inst.thread():
+        if (
+            app_inst is not None
+            and QThread.currentThread() == app_inst.thread()
+        ):
             msg = QMessageBox()
             msg.setIcon(QMessageBox.Icon.Critical)
             msg.setWindowTitle("Anz-Creator — Error")
@@ -141,17 +161,29 @@ if __name__ == "__main__":
         os.environ.get("APPDATA", os.path.expanduser("~")),
         "Anz-Creator", "logs", "crash_dump.log",
     )
-    os.makedirs(os.path.dirname(_crash_log), exist_ok=True)
-    _crash_file = open(_crash_log, "a", encoding="utf-8")
-    _crash_file.write("\n\n=== Session started ===\n")
-    _crash_file.flush()
-    faulthandler.enable(file=_crash_file, all_threads=True)
+    try:
+        os.makedirs(os.path.dirname(_crash_log), exist_ok=True)
+        _crash_file = open(_crash_log, "a", encoding="utf-8")
+        _crash_file.write("\n\n=== Session started ===\n")
+        _crash_file.flush()
+        faulthandler.enable(file=_crash_file, all_threads=True)
+    except (OSError, PermissionError) as exc:
+        # If we can't create the crash log, fall back to stderr
+        _crash_file = None
+        try:
+            faulthandler.enable()
+        except Exception:
+            pass
+        print(f"Warning: cannot create crash log: {exc}", file=sys.stderr)
 
     _cf = _crash_file
 
     def _close_crash_file():
         if _cf and not _cf.closed:
-            _cf.close()
+            try:
+                _cf.close()
+            except Exception:
+                pass
 
     atexit.register(_close_crash_file)
     sys.excepthook = _global_exception_handler
