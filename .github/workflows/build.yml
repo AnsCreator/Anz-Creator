@@ -5,9 +5,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   version:
     name: Auto Version Tag
@@ -16,7 +13,7 @@ jobs:
       new_tag: ${{ steps.tag.outputs.new_tag }}
       changelog: ${{ steps.tag.outputs.changelog }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -56,15 +53,12 @@ jobs:
     runs-on: windows-latest
     needs: version
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Install Git
-        run: choco install git -y --no-progress
 
       - name: Install NSIS
         run: choco install nsis -y --no-progress
@@ -92,48 +86,18 @@ jobs:
             }
           }
 
+      - name: Install SAM2 package
+        run: |
+          cd segment-anything-2
+          pip install -e . --no-deps
+          cd ..
+
       - name: Write version file
         run: echo '${{ needs.version.outputs.new_tag }}' > version.txt
 
       - name: Build with PyInstaller
         run: |
-          $env:PYTHONPATH = "$pwd\segment-anything-2;$env:PYTHONPATH"
-          pyinstaller `
-            --name "Anz-Creator" `
-            --windowed `
-            --onefile `
-            --add-data "config.yaml;." `
-            --add-data "version.txt;." `
-            --add-data "segment-anything-2\sam2;sam2" `
-            --hidden-import PyQt6 `
-            --hidden-import PyQt6.QtCore `
-            --hidden-import PyQt6.QtGui `
-            --hidden-import PyQt6.QtWidgets `
-            --hidden-import qt_material `
-            --hidden-import sam2 `
-            --hidden-import sam2.build_sam `
-            --hidden-import sam2.sam2_image_predictor `
-            --hidden-import sam2.sam2_video_predictor `
-            --hidden-import sam2.modeling `
-            --hidden-import sam2.modeling.sam2_base `
-            --hidden-import sam2.modeling.transformer `
-            --hidden-import sam2.modeling.backbones `
-            --hidden-import sam2.utils `
-            --hidden-import hydra `
-            --hidden-import hydra._internal `
-            --hidden-import omegaconf `
-            --hidden-import iopath `
-            --hidden-import fvcore `
-            --hidden-import yacs `
-            --hidden-import tqdm `
-            --hidden-import ultralytics `
-            --hidden-import torch `
-            --hidden-import cv2 `
-            --collect-all sam2 `
-            --collect-all hydra `
-            --collect-all omegaconf `
-            --icon icon.ico `
-            main.py
+          pyinstaller anz_creator.spec
 
       - name: Prepare dist folder
         run: |
@@ -192,7 +156,7 @@ jobs:
           Get-ChildItem -Path release
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: Anz-Creator-Installer
           path: release/*.exe
@@ -205,8 +169,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/download-artifact@v6
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
           name: Anz-Creator-Installer
           path: ./release
@@ -216,23 +180,23 @@ jobs:
           name: "Anz-Creator ${{ needs.version.outputs.new_tag }}"
           body: |
             ## 🚀 Anz-Creator ${{ needs.version.outputs.new_tag }}
-            
+
             ### Changes
             ${{ needs.version.outputs.changelog }}
-            
+
             ### Features
             - Watermark Removal (Auto YOLOv8 + Manual SAM2)
             - ProPainter video inpainting
             - yt-dlp support 1000+ platforms
             - PyQt6 Dark UI
-            
+
             *(Note: System Dependencies like FFmpeg and AI Models like SAM2/YOLOv8 are no longer pre-bundled to keep the installer lightweight. You can download them directly inside the app via the Settings menu).*
-            
+
             ### Requirements
             - Windows 10/11 64-bit
             - 8GB RAM minimum
             - NVIDIA GPU 4-12GB VRAM (recommended)
-            
+
             ### Installation
             1. Download Anz-Creator-Setup.exe
             2. Run as Administrator
