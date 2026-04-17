@@ -594,6 +594,9 @@ class WatermarkRemovalPanel(QWidget):
             missing.append(("yolov8", yolo_var))
         if mode == "manual" and not os.path.isfile(sam2_path):
             missing.append(("sam2", sam2_var))
+        # ProPainter is needed for both modes
+        if not self.model_mgr.is_downloaded("propainter", pp_mode):
+            missing.append(("propainter", pp_mode))
 
         if missing:
             model_list = "\n".join(
@@ -612,6 +615,24 @@ class WatermarkRemovalPanel(QWidget):
                     lambda: self._run_pipeline(mode, click_points),
                 )
             return
+
+        # For manual mode, also verify SAM2 Python package is installed
+        if mode == "manual":
+            try:
+                import sam2.build_sam  # noqa: F401
+            except ImportError:
+                reply = QMessageBox.question(
+                    self, "SAM2 Package Required",
+                    "SAM2 Python package is not installed.\n\n"
+                    "SAM2 must be installed from GitHub:\n"
+                    "  pip install git+https://github.com/facebookresearch/sam2.git\n\n"
+                    "Run the installer now? (Requires Git + PyTorch)",
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No,
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    self._install_sam2_package()
+                return
 
         output_dir = "output"
         os.makedirs(output_dir, exist_ok=True)
@@ -703,6 +724,63 @@ class WatermarkRemovalPanel(QWidget):
             self._show_error("Download Error", str(e))
 
         worker = Worker(_dl)
+        worker.signals.progress.connect(dlg.update)
+        worker.signals.finished.connect(_on_finished)
+        worker.signals.error.connect(_on_error)
+        dlg.cancel_btn.clicked.connect(worker.cancel)
+        self.task_queue.submit(worker)
+
+    def _install_sam2_package(self):
+        """Install SAM2 Python package from GitHub via pip subprocess."""
+        import subprocess
+        import sys
+
+        dlg = ModelDownloadDialog(self, title="Installing SAM2 Package")
+        dlg.update(0, "Running pip install (this can take several minutes)…")
+        dlg.show()
+
+        def _install(progress_callback=None, cancel_flag=None):
+            if progress_callback:
+                progress_callback(10, "Installing SAM2 from GitHub…")
+            cmd = [
+                sys.executable, "-m", "pip", "install",
+                "--no-build-isolation",
+                "git+https://github.com/facebookresearch/sam2.git",
+            ]
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+            # Capture output to show any errors
+            result = subprocess.run(
+                cmd,
+                capture_output=True, text=True,
+                creationflags=creationflags,
+            )
+            if progress_callback:
+                progress_callback(100, "SAM2 installed.")
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"pip install failed (exit {result.returncode}):\n"
+                    f"{result.stderr[-500:]}"
+                )
+            return True
+
+        def _on_finished(_result):
+            dlg.close()
+            QMessageBox.information(
+                self, "SAM2 Installed",
+                "SAM2 Python package installed successfully.\n"
+                "You can now use Manual mode.",
+            )
+
+        def _on_error(e):
+            dlg.close()
+            self._show_error(
+                "SAM2 Install Failed",
+                f"{e}\n\nPlease install manually from a terminal:\n"
+                "  pip install git+https://github.com/facebookresearch/sam2.git\n\n"
+                "Requirements: Git and PyTorch must be installed first.",
+            )
+
+        worker = Worker(_install)
         worker.signals.progress.connect(dlg.update)
         worker.signals.finished.connect(_on_finished)
         worker.signals.error.connect(_on_error)
