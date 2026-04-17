@@ -46,55 +46,57 @@ models:
 
   propainter:
     default: "standard"
-    # ProPainter weights dari HuggingFace Hub — sczhou/ProPainter repo
+    # ProPainter weights dari GitHub Release tag v0.1.0 (sczhou/ProPainter).
+    # Base URL: https://github.com/sczhou/ProPainter/releases/download/v0.1.0/
+    # Semua varian share file yang sama; perbedaan ada di runtime preset (vram/quality).
     options:
       lightweight:
         vram_gb: 4
         size_mb: 150
-        description: "Lightweight - RAFT + ProPainter (4GB VRAM)"
-        url: "https://huggingface.co/sczhou/ProPainter/resolve/main/ProPainter.pth"
+        description: "Lightweight - 4GB VRAM"
+        url: "https://github.com/sczhou/ProPainter/releases/download/v0.1.0/ProPainter.pth"
         extra_files:
           - name: "raft-things.pth"
-            url: "https://huggingface.co/sczhou/ProPainter/resolve/main/raft-things.pth"
+            url: "https://github.com/sczhou/ProPainter/releases/download/v0.1.0/raft-things.pth"
             size_mb: 21
           - name: "recurrent_flow_completion.pth"
-            url: "https://huggingface.co/sczhou/ProPainter/resolve/main/recurrent_flow_completion.pth"
+            url: "https://github.com/sczhou/ProPainter/releases/download/v0.1.0/recurrent_flow_completion.pth"
             size_mb: 20
       standard:
         vram_gb: 6
         size_mb: 150
         description: "Standard - Recommended (6GB VRAM)"
-        url: "https://huggingface.co/sczhou/ProPainter/resolve/main/ProPainter.pth"
+        url: "https://github.com/sczhou/ProPainter/releases/download/v0.1.0/ProPainter.pth"
         extra_files:
           - name: "raft-things.pth"
-            url: "https://huggingface.co/sczhou/ProPainter/resolve/main/raft-things.pth"
+            url: "https://github.com/sczhou/ProPainter/releases/download/v0.1.0/raft-things.pth"
             size_mb: 21
           - name: "recurrent_flow_completion.pth"
-            url: "https://huggingface.co/sczhou/ProPainter/resolve/main/recurrent_flow_completion.pth"
+            url: "https://github.com/sczhou/ProPainter/releases/download/v0.1.0/recurrent_flow_completion.pth"
             size_mb: 20
       high_quality:
         vram_gb: 8
         size_mb: 150
         description: "High Quality (8GB VRAM)"
-        url: "https://huggingface.co/sczhou/ProPainter/resolve/main/ProPainter.pth"
+        url: "https://github.com/sczhou/ProPainter/releases/download/v0.1.0/ProPainter.pth"
         extra_files:
           - name: "raft-things.pth"
-            url: "https://huggingface.co/sczhou/ProPainter/resolve/main/raft-things.pth"
+            url: "https://github.com/sczhou/ProPainter/releases/download/v0.1.0/raft-things.pth"
             size_mb: 21
           - name: "recurrent_flow_completion.pth"
-            url: "https://huggingface.co/sczhou/ProPainter/resolve/main/recurrent_flow_completion.pth"
+            url: "https://github.com/sczhou/ProPainter/releases/download/v0.1.0/recurrent_flow_completion.pth"
             size_mb: 20
       ultra_4k:
         vram_gb: 12
         size_mb: 150
         description: "Ultra 4K (12GB+ VRAM)"
-        url: "https://huggingface.co/sczhou/ProPainter/resolve/main/ProPainter.pth"
+        url: "https://github.com/sczhou/ProPainter/releases/download/v0.1.0/ProPainter.pth"
         extra_files:
           - name: "raft-things.pth"
-            url: "https://huggingface.co/sczhou/ProPainter/resolve/main/raft-things.pth"
+            url: "https://github.com/sczhou/ProPainter/releases/download/v0.1.0/raft-things.pth"
             size_mb: 21
           - name: "recurrent_flow_completion.pth"
-            url: "https://huggingface.co/sczhou/ProPainter/resolve/main/recurrent_flow_completion.pth"
+            url: "https://github.com/sczhou/ProPainter/releases/download/v0.1.0/recurrent_flow_completion.pth"
             size_mb: 20
 
 video:
