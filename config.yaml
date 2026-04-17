@@ -1,13 +1,7 @@
 app:
   name: "Anz-Creator"
   version: "1.0.0"
-  theme: "dark_teal.xml"
-  language: "en"
-
-paths:
-  models_dir: "%APPDATA%/Anz-Creator/models"
-  temp_dir: "temp"
-  output_dir: "output"
+  author: "Anz"
 
 models:
   yolov8:
@@ -15,19 +9,19 @@ models:
     options:
       yolov8n:
         size_mb: 6
-        description: "Nano - CPU friendly, fastest"
+        description: "Nano - Fastest, lowest accuracy"
         url: "https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8n.pt"
       yolov8s:
         size_mb: 22
-        description: "Small - balanced speed/accuracy"
+        description: "Small - Fast, good accuracy"
         url: "https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8s.pt"
       yolov8m:
         size_mb: 52
-        description: "Medium - recommended"
+        description: "Medium - Balanced"
         url: "https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8m.pt"
       yolov8x:
         size_mb: 131
-        description: "XLarge - highest accuracy"
+        description: "XLarge - Slowest, highest accuracy"
         url: "https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8x.pt"
 
   sam2:
@@ -35,47 +29,83 @@ models:
     options:
       sam2_hiera_tiny:
         size_mb: 38
-        description: "Tiny - fastest inference"
+        description: "Tiny - Fastest"
         url: "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_tiny.pt"
       sam2_hiera_small:
         size_mb: 46
-        description: "Small - good balance"
+        description: "Small"
         url: "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_small.pt"
       sam2_hiera_base_plus:
         size_mb: 81
-        description: "Base+ - recommended"
+        description: "Base+ - Recommended"
         url: "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_base_plus.pt"
       sam2_hiera_large:
         size_mb: 224
-        description: "Large - max precision"
+        description: "Large - Highest quality"
         url: "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_large.pt"
 
   propainter:
     default: "standard"
+    # ProPainter weights dari HuggingFace Hub — sczhou/ProPainter repo
     options:
       lightweight:
         vram_gb: 4
-        description: "Lightweight - 4GB VRAM"
+        size_mb: 150
+        description: "Lightweight - RAFT + ProPainter (4GB VRAM)"
+        url: "https://huggingface.co/sczhou/ProPainter/resolve/main/ProPainter.pth"
+        extra_files:
+          - name: "raft-things.pth"
+            url: "https://huggingface.co/sczhou/ProPainter/resolve/main/raft-things.pth"
+            size_mb: 21
+          - name: "recurrent_flow_completion.pth"
+            url: "https://huggingface.co/sczhou/ProPainter/resolve/main/recurrent_flow_completion.pth"
+            size_mb: 20
       standard:
         vram_gb: 6
-        description: "Standard - 6GB VRAM (recommended)"
+        size_mb: 150
+        description: "Standard - Recommended (6GB VRAM)"
+        url: "https://huggingface.co/sczhou/ProPainter/resolve/main/ProPainter.pth"
+        extra_files:
+          - name: "raft-things.pth"
+            url: "https://huggingface.co/sczhou/ProPainter/resolve/main/raft-things.pth"
+            size_mb: 21
+          - name: "recurrent_flow_completion.pth"
+            url: "https://huggingface.co/sczhou/ProPainter/resolve/main/recurrent_flow_completion.pth"
+            size_mb: 20
       high_quality:
         vram_gb: 8
-        description: "High Quality - 8GB VRAM"
+        size_mb: 150
+        description: "High Quality (8GB VRAM)"
+        url: "https://huggingface.co/sczhou/ProPainter/resolve/main/ProPainter.pth"
+        extra_files:
+          - name: "raft-things.pth"
+            url: "https://huggingface.co/sczhou/ProPainter/resolve/main/raft-things.pth"
+            size_mb: 21
+          - name: "recurrent_flow_completion.pth"
+            url: "https://huggingface.co/sczhou/ProPainter/resolve/main/recurrent_flow_completion.pth"
+            size_mb: 20
       ultra_4k:
         vram_gb: 12
-        description: "Ultra 4K - 12GB VRAM"
+        size_mb: 150
+        description: "Ultra 4K (12GB+ VRAM)"
+        url: "https://huggingface.co/sczhou/ProPainter/resolve/main/ProPainter.pth"
+        extra_files:
+          - name: "raft-things.pth"
+            url: "https://huggingface.co/sczhou/ProPainter/resolve/main/raft-things.pth"
+            size_mb: 21
+          - name: "recurrent_flow_completion.pth"
+            url: "https://huggingface.co/sczhou/ProPainter/resolve/main/recurrent_flow_completion.pth"
+            size_mb: 20
 
 video:
   default_quality: "1080p"
   default_format: "mp4"
-  supported_qualities:
-    - "4K"
-    - "1080p"
-    - "720p"
-    - "480p"
+  supported_formats: ["mp4", "webm", "mkv", "mov", "avi"]
 
-ffmpeg:
-  video_codec: "libx264"
-  crf: 18
-  preset: "medium"
+ui:
+  default_theme: "dark_teal.xml"
+  themes:
+    - "dark_teal.xml"
+    - "dark_blue.xml"
+    - "dark_amber.xml"
+    - "light_blue.xml"
