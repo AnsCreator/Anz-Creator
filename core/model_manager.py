@@ -57,15 +57,30 @@ def _download_file(
     Path(os.path.dirname(dest_path)).mkdir(parents=True, exist_ok=True)
     tmp_path = dest_path + ".part"
 
-    # Support resume
-    headers = {}
+    # Support resume — only if .part file has reasonable size (> 1KB)
+    # to avoid resuming from corrupt/failed past attempts.
+    headers = {
+        # Some CDNs reject the default requests UA or pick a different backend
+        # based on User-Agent — set a Mozilla UA for broad compatibility.
+        "User-Agent": "Mozilla/5.0 (Anz-Creator)",
+    }
     resume_pos = 0
     if os.path.isfile(tmp_path):
-        resume_pos = os.path.getsize(tmp_path)
-        headers["Range"] = f"bytes={resume_pos}-"
+        existing_size = os.path.getsize(tmp_path)
+        if existing_size > 1024:
+            resume_pos = existing_size
+            headers["Range"] = f"bytes={resume_pos}-"
+        else:
+            # Too small to be worth resuming — treat as fresh download
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
     try:
-        with requests.get(url, stream=True, headers=headers, timeout=30) as r:
+        with requests.get(
+            url, stream=True, headers=headers, timeout=30, allow_redirects=True
+        ) as r:
             r.raise_for_status()
             total_size = int(r.headers.get("Content-Length", 0)) + resume_pos
             mode = "ab" if resume_pos else "wb"
