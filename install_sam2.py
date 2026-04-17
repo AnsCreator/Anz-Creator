@@ -14,7 +14,6 @@ import os
 import subprocess
 import sys
 
-
 SAM2_REPO_URL = "git+https://github.com/facebookresearch/sam2.git"
 
 
