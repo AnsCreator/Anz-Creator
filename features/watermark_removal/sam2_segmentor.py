@@ -11,7 +11,6 @@ from typing import Callable, Optional
 
 import cv2
 import numpy as np
-import torch
 
 from utils.logger import log
 
@@ -23,7 +22,9 @@ class SAM2Segmentor:
 
     def __init__(self, model_path: str, device: str = "cuda"):
         self.model_path = model_path
-        self.device = device if torch.cuda.is_available() else "cpu"
+        self._requested_device = device
+        # Resolved at load time so importing this module never requires torch.
+        self.device: str = "cpu"
         self._predictor = None
         self._video_predictor = None
 
@@ -33,26 +34,39 @@ class SAM2Segmentor:
         Searches the SAM2 package directory for a file containing '_target_'
         that matches the expected model size.
         """
-        if getattr(sys, 'frozen', False):
-            base_dir = sys._MEIPASS
+        if getattr(sys, "frozen", False):
+            base_dir = getattr(sys, "_MEIPASS", "")
+            if not base_dir or not os.path.isdir(base_dir):
+                raise RuntimeError("Cannot locate SAM2 package in frozen bundle.")
         else:
-            import sam2
-            base_dir = os.path.dirname(sam2.__file__)
+            try:
+                import sam2
+                base_dir = os.path.dirname(sam2.__file__)
+            except ImportError as exc:
+                raise RuntimeError(
+                    "SAM2 package not installed. "
+                    "Install with: pip install "
+                    "git+https://github.com/facebookresearch/segment-anything-2.git"
+                ) from exc
 
         model_name = os.path.basename(self.model_path).lower()
         if "tiny" in model_name:
-            target_patterns = ["sam2_hiera_t.yaml", "sam2_hiera_tiny.yaml"]
+            target_patterns = ("sam2_hiera_t.yaml", "sam2_hiera_tiny.yaml")
         elif "small" in model_name:
-            target_patterns = ["sam2_hiera_s.yaml", "sam2_hiera_small.yaml"]
+            target_patterns = ("sam2_hiera_s.yaml", "sam2_hiera_small.yaml")
         elif "large" in model_name:
-            target_patterns = ["sam2_hiera_l.yaml", "sam2_hiera_large.yaml"]
+            target_patterns = ("sam2_hiera_l.yaml", "sam2_hiera_large.yaml")
         else:
-            target_patterns = ["sam2_hiera_b+.yaml", "sam2_hiera_base.yaml", "sam2_hiera_b_plus.yaml"]
+            target_patterns = (
+                "sam2_hiera_b+.yaml",
+                "sam2_hiera_base.yaml",
+                "sam2_hiera_b_plus.yaml",
+            )
 
-        # Walk the base directory for a config file that contains '_target_' (actual model config)
+        # Walk the base directory for a config file containing '_target_'
         for root, _, files in os.walk(base_dir):
             for file in files:
-                if any(file.endswith(pat) for pat in target_patterns):
+                if file.endswith(target_patterns):
                     filepath = os.path.join(root, file)
                     try:
                         with open(filepath, "r", encoding="utf-8") as f:
@@ -69,46 +83,64 @@ class SAM2Segmentor:
                     try:
                         with open(filepath, "r", encoding="utf-8") as f:
                             if "_target_" in f.read():
-                                log.warning("Using fallback config: %s", filepath)
+                                log.warning(
+                                    "Using fallback SAM2 config: %s", filepath,
+                                )
                                 return filepath
                     except Exception:
                         continue
 
-        raise FileNotFoundError(f"Could not find SAM2 config for {self.model_path} in {base_dir}")
+        raise FileNotFoundError(
+            f"Could not find SAM2 config for {self.model_path} in {base_dir}",
+        )
 
     def _load_model(self):
         """Load SAM2 model using official builder with explicit config."""
         if self._predictor is not None and self._video_predictor is not None:
             return
 
+        # Lazy import torch — this keeps the module importable even when
+        # torch is not installed (tests rely on this).
+        try:
+            import torch
+        except ImportError as exc:
+            raise RuntimeError(
+                "PyTorch is required to load SAM2. "
+                "Install it with: pip install torch torchvision",
+            ) from exc
+
+        self.device = (
+            self._requested_device
+            if torch.cuda.is_available()
+            else "cpu"
+        )
         log.info("Loading SAM2 from %s on %s", self.model_path, self.device)
 
         try:
-            # Gunakan builder khusus video dari SAM2
             from sam2.build_sam import build_sam2_video_predictor
             from sam2.sam2_image_predictor import SAM2ImagePredictor
+        except ImportError as exc:
+            raise RuntimeError(
+                "SAM2 package not installed. "
+                "Install with: pip install "
+                "git+https://github.com/facebookresearch/segment-anything-2.git"
+            ) from exc
 
-            # Find the correct config file based on checkpoint name
-            config_file = self._find_sam2_config()
-            log.info("Using SAM2 config: %s", config_file)
+        config_file = self._find_sam2_config()
+        log.info("Using SAM2 config: %s", config_file)
 
-            # 1. Build Video Predictor terlebih dahulu (Ini akan menghasilkan objek SAM2Base)
-            self._video_predictor = build_sam2_video_predictor(
-                config_file=config_file,
-                ckpt_path=self.model_path,
-                device=self.device,
-                apply_postprocessing=True,
-            )
+        # Build video predictor first (produces an SAM2Base-derived object)
+        self._video_predictor = build_sam2_video_predictor(
+            config_file=config_file,
+            ckpt_path=self.model_path,
+            device=self.device,
+            apply_postprocessing=True,
+        )
 
-            # 2. Image Predictor dapat menggunakan/membungkus objek Video Predictor secara langsung
-            # Ini sangat menghemat VRAM karena tidak perlu load bobot model dua kali
-            self._predictor = SAM2ImagePredictor(self._video_predictor)
+        # Image predictor wraps the video predictor to share weights.
+        self._predictor = SAM2ImagePredictor(self._video_predictor)
 
-            log.info("SAM2 predictors ready")
-
-        except Exception as e:
-            log.error("Failed to load SAM2: %s", e)
-            raise
+        log.info("SAM2 predictors ready")
 
     def segment_frame(
         self,
@@ -139,10 +171,10 @@ class SAM2Segmentor:
             log.warning("SAM2 returned no masks")
             return np.zeros(frame.shape[:2], dtype=np.uint8)
 
-        best_idx = scores.argmax()
+        best_idx = int(scores.argmax())
         mask = masks[best_idx]
         binary_mask = (mask > 0.5).astype(np.uint8) * 255
-        log.info("SAM2 segmented mask — %d pixels", np.sum(mask > 0.5))
+        log.info("SAM2 segmented mask — %d pixels", int(np.sum(mask > 0.5)))
         return binary_mask
 
     def propagate_masks(
@@ -157,9 +189,14 @@ class SAM2Segmentor:
     ) -> str:
         self._load_model()
 
+        # Lazy torch import (already loaded above but we need it here too).
+        import torch
+
         os.makedirs(masks_dir, exist_ok=True)
 
-        frame_files = sorted([f for f in os.listdir(frames_dir) if f.endswith(".png")])
+        frame_files = sorted([
+            f for f in os.listdir(frames_dir) if f.endswith(".png")
+        ])
         total = len(frame_files)
 
         if total == 0:
@@ -167,13 +204,14 @@ class SAM2Segmentor:
             return masks_dir
 
         log.info("Propagating masks across %d frames…", total)
-
         if progress_callback:
             progress_callback(0, "Propagating masks…")
 
         state = self._video_predictor.init_state(video_path=frames_dir)
 
-        mask_tensor = torch.from_numpy(initial_mask.astype(np.float32) / 255.0).to(self.device)
+        mask_tensor = torch.from_numpy(
+            initial_mask.astype(np.float32) / 255.0,
+        ).to(self.device)
 
         self._video_predictor.add_new_mask(
             inference_state=state,
@@ -185,12 +223,16 @@ class SAM2Segmentor:
         if scene_cuts and click_points:
             for sc_frame in scene_cuts:
                 if 0 < sc_frame < total:
-                    frame_path = os.path.join(frames_dir, frame_files[sc_frame])
+                    frame_path = os.path.join(
+                        frames_dir, frame_files[sc_frame],
+                    )
                     frame = cv2.imread(frame_path)
                     if frame is not None:
                         try:
                             re_mask = self.segment_frame(frame, click_points)
-                            re_mask_tensor = torch.from_numpy(re_mask.astype(np.float32) / 255.0).to(self.device)
+                            re_mask_tensor = torch.from_numpy(
+                                re_mask.astype(np.float32) / 255.0,
+                            ).to(self.device)
                             self._video_predictor.add_new_mask(
                                 inference_state=state,
                                 frame_idx=sc_frame,
@@ -198,9 +240,12 @@ class SAM2Segmentor:
                                 mask=re_mask_tensor,
                             )
                         except Exception as exc:
-                            log.warning("Re-init at scene cut %d failed: %s", sc_frame, exc)
+                            log.warning(
+                                "Re-init at scene cut %d failed: %s",
+                                sc_frame, exc,
+                            )
 
-        for frame_idx, obj_ids, masks in self._video_predictor.propagate_in_video(state):
+        for frame_idx, _obj_ids, masks in self._video_predictor.propagate_in_video(state):
             if cancel_flag and cancel_flag():
                 return masks_dir
 
@@ -214,7 +259,9 @@ class SAM2Segmentor:
 
             if progress_callback and frame_idx % 10 == 0:
                 pct = int((frame_idx + 1) / total * 100)
-                progress_callback(pct, f"Propagating masks… {frame_idx + 1}/{total}")
+                progress_callback(
+                    pct, f"Propagating masks… {frame_idx + 1}/{total}",
+                )
 
         if progress_callback:
             progress_callback(100, "Mask propagation complete.")
