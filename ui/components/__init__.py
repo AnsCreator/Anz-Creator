@@ -173,6 +173,10 @@ class ClickableFrame(VideoPreview):
         except Exception:
             pass
 
+    def reset_points(self):
+        """Public API: clear points without resetting the image."""
+        self._points.clear()
+
     def set_original_size(self, width: int, height: int):
         """Set original image dimensions for coordinate mapping."""
         self._original_size = (width, height)
@@ -260,8 +264,10 @@ class ClickableFrame(VideoPreview):
 
             # Set directly via QLabel.setPixmap, bypassing our override
             self._fitting = True
-            super(VideoPreview, self).setPixmap(scaled_pm)
-            self._fitting = False
+            try:
+                super(VideoPreview, self).setPixmap(scaled_pm)
+            finally:
+                self._fitting = False
 
         except Exception:
             pass
