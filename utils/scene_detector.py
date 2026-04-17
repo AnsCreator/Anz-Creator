@@ -4,7 +4,7 @@ PySceneDetect wrapper — detect scene cuts to re-initialize trackers.
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Optional
 
 from utils.logger import log
 
@@ -20,15 +20,17 @@ except ImportError:
 def detect_scenes(
     video_path: str,
     threshold: float = 27.0,
-    progress_callback: Callable[[int, str], None] = None,
-    cancel_flag: Callable[[], bool] = None,
+    progress_callback: Optional[Callable[[int, str], None]] = None,
+    cancel_flag: Optional[Callable[[], bool]] = None,
 ) -> list[tuple[int, int]]:
     """
     Detect scene boundaries in a video.
     Returns list of (start_frame, end_frame) tuples per scene.
     """
     if not HAS_SCENEDETECT:
-        log.warning("SceneDetect unavailable; treating entire video as one scene.")
+        log.warning(
+            "SceneDetect unavailable; treating entire video as one scene.",
+        )
         return []
 
     log.info("Detecting scenes in %s (threshold=%.1f)", video_path, threshold)
@@ -43,7 +45,7 @@ def detect_scenes(
 
         scene_list = scene_mgr.get_scene_list()
 
-        results = []
+        results: list[tuple[int, int]] = []
         for start_time, end_time in scene_list:
             s = int(start_time.get_frames())
             e = int(end_time.get_frames())
@@ -57,5 +59,7 @@ def detect_scenes(
     except Exception as exc:
         log.warning("Scene detection failed: %s", exc)
         if progress_callback:
-            progress_callback(100, "Scene detection failed, treating as single scene.")
+            progress_callback(
+                100, "Scene detection failed, treating as single scene.",
+            )
         return []
