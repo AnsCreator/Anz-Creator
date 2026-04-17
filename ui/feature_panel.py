@@ -30,7 +30,6 @@ from core.model_manager import ModelManager
 from core.settings import Settings
 from core.task_queue import TaskQueue, Worker
 from core.video_io import VideoInfo, get_video_info
-from features.watermark_removal import WatermarkRemovalPipeline
 from ui.components import (
     ClickableFrame,
     FileDropZone,
@@ -178,7 +177,7 @@ class WatermarkRemovalPanel(QWidget):
 
         manual_btn_row = QHBoxLayout()
         self.clear_pts_btn = QPushButton("Clear Points")
-        self.clear_pts_btn.clicked.connect(self.click_frame.clear_points)
+        self.clear_pts_btn.clicked.connect(self._on_clear_points)
         manual_btn_row.addWidget(self.clear_pts_btn)
 
         self.points_label = QLabel("Points: 0")
@@ -231,6 +230,10 @@ class WatermarkRemovalPanel(QWidget):
         layout.addLayout(out_btn_row)
 
         layout.addStretch()
+
+    def _on_clear_points(self):
+        self.click_frame.clear_points()
+        self.points_label.setText("Points: 0")
 
     # ── URL handlers ─────────────────────────────────────
     def _on_fetch_url(self):
@@ -353,7 +356,10 @@ class WatermarkRemovalPanel(QWidget):
                 ffmpeg_bin = shutil.which("ffmpeg")
                 if not ffmpeg_bin:
                     app_bin = _app_bin_dir()
-                    candidate = os.path.join(app_bin, "ffmpeg.exe")
+                    candidate = os.path.join(
+                        app_bin,
+                        "ffmpeg.exe" if os.name == "nt" else "ffmpeg",
+                    )
                     if os.path.isfile(candidate):
                         ffmpeg_bin = candidate
 
@@ -374,7 +380,7 @@ class WatermarkRemovalPanel(QWidget):
                         si = subprocess.STARTUPINFO()
                         si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                         si.wShowWindow = 0
-                        cf = subprocess.CREATE_NO_WINDOW
+                        cf = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
                     proc = subprocess.run(
                         cmd, capture_output=True, timeout=30,
@@ -496,11 +502,12 @@ class WatermarkRemovalPanel(QWidget):
                     return
 
                 self.click_frame.set_original_size(w, h)
-                self.click_frame._points.clear()
+                self.click_frame.reset_points()
 
                 self.auto_preview.set_pixmap_direct(QPixmap(pixmap))
                 self.click_frame.set_pixmap_direct(QPixmap(pixmap))
 
+                self.points_label.setText("Points: 0")
                 self.auto_detect_btn.setEnabled(True)
                 self.manual_run_btn.setEnabled(True)
                 self.progress.reset()
@@ -550,6 +557,17 @@ class WatermarkRemovalPanel(QWidget):
 
     # ── Pipeline runner ──────────────────────────────────
     def _run_pipeline(self, mode: str, click_points=None):
+        # Import pipeline lazily — it pulls in torch which can be heavy
+        # and may not be installed in test-only environments.
+        try:
+            from features.watermark_removal import WatermarkRemovalPipeline
+        except ImportError as exc:
+            self._show_error(
+                "Missing Dependencies",
+                f"Watermark removal requires PyTorch + OpenCV:\n{exc}",
+            )
+            return
+
         settings = self.settings
         yolo_var = settings.get("models.yolov8")
         sam2_var = settings.get("models.sam2")
@@ -706,13 +724,19 @@ class WatermarkRemovalPanel(QWidget):
         )
         abs_folder = os.path.abspath(folder)
         if os.name == "nt":
-            os.startfile(abs_folder)
+            try:
+                os.startfile(abs_folder)  # type: ignore[attr-defined]
+            except OSError as exc:
+                log.warning("Cannot open folder: %s", exc)
         else:
             import subprocess as sp
             try:
                 sp.Popen(["xdg-open", abs_folder])
             except FileNotFoundError:
-                sp.Popen(["open", abs_folder])
+                try:
+                    sp.Popen(["open", abs_folder])
+                except FileNotFoundError:
+                    log.warning("No file manager found to open: %s", abs_folder)
 
     # ── Helpers ──────────────────────────────────────────
     def _show_error(self, title: str, msg: str):
@@ -747,9 +771,15 @@ class SettingsPanel(QWidget):
         layout.addWidget(self._ffmpeg_group())
 
         layout.addWidget(SectionHeader("🧠  AI Model Settings"))
-        layout.addWidget(self._model_list_group("YOLOv8 (Auto Detection)", "yolov8"))
-        layout.addWidget(self._model_list_group("SAM2 (Manual Segmentation)", "sam2"))
-        layout.addWidget(self._model_list_group("ProPainter (Inpainting)", "propainter"))
+        layout.addWidget(
+            self._model_list_group("YOLOv8 (Auto Detection)", "yolov8")
+        )
+        layout.addWidget(
+            self._model_list_group("SAM2 (Manual Segmentation)", "sam2")
+        )
+        layout.addWidget(
+            self._model_list_group("ProPainter (Inpainting)", "propainter")
+        )
 
         layout.addWidget(SectionHeader("📂  Paths"))
         models_dir = os.path.join(
@@ -769,7 +799,9 @@ class SettingsPanel(QWidget):
     def _ffmpeg_group(self) -> QGroupBox:
         from core.video_io import is_ffmpeg_installed
         group = QGroupBox("FFmpeg Engine")
-        group.setStyleSheet("QGroupBox { font-weight: bold; padding-top: 18px; }")
+        group.setStyleSheet(
+            "QGroupBox { font-weight: bold; padding-top: 18px; }"
+        )
         lay = QVBoxLayout(group)
         lay.setSpacing(6)
 
@@ -781,12 +813,16 @@ class SettingsPanel(QWidget):
         top_row = QHBoxLayout()
 
         name_lbl = QLabel("FFmpeg Essentials (≈80MB)")
-        name_lbl.setStyleSheet("font-size: 13px; color: #e0e0e0; font-weight: bold;")
+        name_lbl.setStyleSheet(
+            "font-size: 13px; color: #e0e0e0; font-weight: bold;"
+        )
         top_row.addWidget(name_lbl)
         top_row.addStretch()
 
         status_lbl = QLabel("✅ Ready")
-        status_lbl.setStyleSheet("color: #66bb6a; font-weight: bold; font-size: 12px;")
+        status_lbl.setStyleSheet(
+            "color: #66bb6a; font-weight: bold; font-size: 12px;"
+        )
 
         dl_btn = QPushButton("⬇ Download")
         dl_btn.setFixedSize(110, 28)
@@ -800,15 +836,22 @@ class SettingsPanel(QWidget):
 
         row_lay.addLayout(top_row)
 
-        desc_lbl = QLabel("Required core dependency for video extraction, audio processing, and saving outputs.")
+        desc_lbl = QLabel(
+            "Required core dependency for video extraction, "
+            "audio processing, and saving outputs."
+        )
         desc_lbl.setWordWrap(True)
-        desc_lbl.setStyleSheet("color: #888; font-size: 12px; margin-left: 0px;")
+        desc_lbl.setStyleSheet(
+            "color: #888; font-size: 12px; margin-left: 0px;"
+        )
         row_lay.addWidget(desc_lbl)
 
         pbar = QProgressBar()
         pbar.setRange(0, 100)
         pbar.setFixedHeight(14)
-        pbar.setStyleSheet("QProgressBar { margin-top: 4px; font-size: 10px; }")
+        pbar.setStyleSheet(
+            "QProgressBar { margin-top: 4px; font-size: 10px; }"
+        )
         pbar.hide()
         row_lay.addWidget(pbar)
 
@@ -820,7 +863,9 @@ class SettingsPanel(QWidget):
         lay.addWidget(row_widget)
         return group
 
-    def _start_ffmpeg_download(self, btn: QPushButton, pbar: QProgressBar, status_lbl: QLabel):
+    def _start_ffmpeg_download(
+        self, btn: QPushButton, pbar: QProgressBar, status_lbl: QLabel,
+    ):
         btn.setEnabled(False)
         pbar.setValue(0)
         pbar.show()
@@ -828,7 +873,10 @@ class SettingsPanel(QWidget):
         from core.video_io import download_ffmpeg
 
         def _do_download(progress_callback=None, cancel_flag=None):
-            return download_ffmpeg(progress_callback=progress_callback, cancel_flag=cancel_flag)
+            return download_ffmpeg(
+                progress_callback=progress_callback,
+                cancel_flag=cancel_flag,
+            )
 
         def _on_progress(pct, msg):
             pbar.setValue(pct)
@@ -857,7 +905,9 @@ class SettingsPanel(QWidget):
 
     def _model_list_group(self, title: str, family: str) -> QGroupBox:
         group = QGroupBox(title)
-        group.setStyleSheet("QGroupBox { font-weight: bold; padding-top: 18px; }")
+        group.setStyleSheet(
+            "QGroupBox { font-weight: bold; padding-top: 18px; }"
+        )
         lay = QVBoxLayout(group)
         lay.setSpacing(6)
 
@@ -872,20 +922,26 @@ class SettingsPanel(QWidget):
 
             top_row = QHBoxLayout()
 
-            size_text = f"{v['size_mb']}MB" if v.get("size_mb") else f"{v.get('vram_gb', 0)}GB VRAM"
+            size_text = (
+                f"{v['size_mb']}MB" if v.get("size_mb")
+                else f"{v.get('vram_gb', 0)}GB VRAM"
+            )
             radio = QRadioButton(f"{v['name']}  ({size_text})")
             radio.setStyleSheet("font-size: 13px; color: #e0e0e0;")
             radio.setMinimumHeight(24)
-            radio.setChecked(v['name'] == current)
+            radio.setChecked(v["name"] == current)
 
             radio.toggled.connect(
-                lambda checked, f=family, n=v['name']: self.settings.set(f"models.{f}", n) if checked else None
+                lambda checked, f=family, n=v["name"]:
+                self.settings.set(f"models.{f}", n) if checked else None
             )
             top_row.addWidget(radio)
             top_row.addStretch()
 
             status_lbl = QLabel("✅ Ready")
-            status_lbl.setStyleSheet("color: #66bb6a; font-weight: bold; font-size: 12px;")
+            status_lbl.setStyleSheet(
+                "color: #66bb6a; font-weight: bold; font-size: 12px;"
+            )
 
             dl_btn = QPushButton("⬇ Download")
             dl_btn.setFixedSize(110, 28)
@@ -899,20 +955,26 @@ class SettingsPanel(QWidget):
 
             row_lay.addLayout(top_row)
 
-            desc_lbl = QLabel(v['description'])
+            desc_lbl = QLabel(v["description"])
             desc_lbl.setWordWrap(True)
-            desc_lbl.setStyleSheet("color: #888; font-size: 12px; margin-left: 22px;")
+            desc_lbl.setStyleSheet(
+                "color: #888; font-size: 12px; margin-left: 22px;"
+            )
             row_lay.addWidget(desc_lbl)
 
             pbar = QProgressBar()
             pbar.setRange(0, 100)
             pbar.setFixedHeight(14)
-            pbar.setStyleSheet("QProgressBar { margin-left: 22px; margin-top: 4px; font-size: 10px; }")
+            pbar.setStyleSheet(
+                "QProgressBar { margin-left: 22px; margin-top: 4px; "
+                "font-size: 10px; }"
+            )
             pbar.hide()
             row_lay.addWidget(pbar)
 
             dl_btn.clicked.connect(
-                lambda checked, f=family, var=v['name'], b=dl_btn, p=pbar, s=status_lbl:
+                lambda checked, f=family, var=v["name"],
+                b=dl_btn, p=pbar, s=status_lbl:
                 self._start_manual_download(f, var, b, p, s)
             )
 
@@ -926,7 +988,10 @@ class SettingsPanel(QWidget):
 
         return group
 
-    def _start_manual_download(self, family: str, variant: str, btn: QPushButton, pbar: QProgressBar, status_lbl: QLabel):
+    def _start_manual_download(
+        self, family: str, variant: str,
+        btn: QPushButton, pbar: QProgressBar, status_lbl: QLabel,
+    ):
         btn.setEnabled(False)
         pbar.setValue(0)
         pbar.show()

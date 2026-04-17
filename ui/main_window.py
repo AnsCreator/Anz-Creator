@@ -280,18 +280,20 @@ class AboutPanel(QWidget):
             from core.updater import apply_update, download_update
 
             url = self._update_info["url"]
+            asset_name = self._update_info.get("asset_name", "update.zip")
 
             def _download_and_apply(
                 progress_callback=None, cancel_flag=None,
             ):
-                zip_path = download_update(
+                path = download_update(
                     url,
+                    asset_name=asset_name,
                     progress_callback=progress_callback,
                     cancel_flag=cancel_flag,
                 )
-                if not zip_path:
+                if not path:
                     return None
-                return apply_update(zip_path)
+                return apply_update(path)
 
             worker = Worker(_download_and_apply)
             worker.signals.progress.connect(
@@ -318,12 +320,11 @@ class AboutPanel(QWidget):
         import sys
         if os.name == "nt":
             # Launch batch script fully detached from our process.
-            # DETACHED_PROCESS ensures the batch script survives our exit.
             DETACHED_PROCESS = 0x00000008
+            CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             subprocess.Popen(
                 ["cmd", "/c", batch_path],
-                creationflags=DETACHED_PROCESS
-                | subprocess.CREATE_NO_WINDOW,
+                creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
                 close_fds=True,
             )
         else:
@@ -366,6 +367,7 @@ class _QtLogHandler(logging.Handler):
 
     def close_handler(self):
         self._closed = True
+        self._widget = None  # Break reference so Qt can't reach deleted widget
         try:
             self.emitter.log_signal.disconnect(self._render_log_safely)
         except (TypeError, RuntimeError):
@@ -398,15 +400,15 @@ class _QtLogHandler(logging.Handler):
 
     def _render_log_safely(self, msg):
         """Executed on Main Thread. Prevents re-entry."""
-        if self._closed or self._is_rendering:
+        if self._closed or self._is_rendering or self._widget is None:
             return
         self._is_rendering = True
         try:
-            if self._widget is not None:
-                self._widget.appendHtml(msg)
+            self._widget.appendHtml(msg)
         except RuntimeError:
             # Widget has been deleted
             self._closed = True
+            self._widget = None
         except Exception:
             pass
         finally:
@@ -480,13 +482,17 @@ class DebugPanel(QWidget):
 
     def remove_handler(self):
         if self._log_handler is not None:
-            self._log_handler.close_handler()
-            logger = logging.getLogger("AnzCreator")
+            handler = self._log_handler
+            self._log_handler = None  # Clear ref first
             try:
-                logger.removeHandler(self._log_handler)
+                handler.close_handler()
             except Exception:
                 pass
-            self._log_handler = None
+            logger = logging.getLogger("AnzCreator")
+            try:
+                logger.removeHandler(handler)
+            except Exception:
+                pass
 
     def _clear(self):
         self.log_text.clear()
@@ -596,7 +602,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         # Remove log handler first to prevent writes to deleted widget
         try:
-            if hasattr(self, 'debug_panel'):
+            if hasattr(self, "debug_panel"):
                 self.debug_panel.remove_handler()
         except Exception:
             pass
