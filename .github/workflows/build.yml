@@ -174,7 +174,7 @@ jobs:
         with:
           name: Anz-Creator-Installer
           path: ./release
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.version.outputs.new_tag }}
           name: "Anz-Creator ${{ needs.version.outputs.new_tag }}"
