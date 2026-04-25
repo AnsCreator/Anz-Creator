@@ -1,7 +1,7 @@
 PyQt6>=6.5.0
 qt-material>=2.14
 PyYAML>=6.0
-yt-dlp>=2024.1.0
+yt-dlp>=2026.3.17
 opencv-python>=4.8.0
 ultralytics>=8.1.0
 torch>=2.1.0
